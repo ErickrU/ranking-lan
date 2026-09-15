@@ -18,14 +18,6 @@ Parameters:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Subredes publicas en al menos dos zonas de disponibilidad.
 
-  RiotApiKey:
-    Type: String
-    Default: ''
-    NoEcho: true
-    Description: >-
-      Clave de la API de Riot. Vacia = la app corre en modo demostracion.
-      Las claves de desarrollo caducan cada 24 h; se actualiza re-desplegando.
-
   Arquitectura:
     Type: String
     Default: ARM64
@@ -55,6 +47,25 @@ Resources:
       RetentionInDays: 7
 
   # ========================================================================
+  # Secreto: la clave de la API de Riot NUNCA viaja en texto plano por la
+  # task definition ni por parametros de CloudFormation.
+  #
+  # - Nace con {"RIOT_API_KEY":""} = modo demostracion.
+  # - Se rota con put-secret-value + force-new-deployment, sin tocar el stack
+  #   (CloudFormation no revierte el valor porque la propiedad no cambia).
+  # - Sin propiedad Name a proposito: al borrar el stack, Secrets Manager
+  #   programa la eliminacion con ventana de recuperacion, y un nombre
+  #   generado evita colisiones si se recrea el stack esos dias.
+  # ========================================================================
+  SecretoClaveRiot:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub >-
+        Clave de la API de Riot para ${AWS::StackName}
+        (JSON {"RIOT_API_KEY":"..."}; cadena vacia = modo demostracion)
+      SecretString: '{"RIOT_API_KEY":""}'
+
+  # ========================================================================
   # IAM: solo lo que ECS necesita para arrancar la tarea (ECR + logs)
   # ========================================================================
   RolEjecucion:
@@ -70,6 +81,16 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: leer-secreto-riot
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Solo ESTE secreto, solo lectura. Con la llave administrada por
+              # AWS (aws/secretsmanager) no hace falta kms:Decrypt explicito.
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref SecretoClaveRiot
 
   # ========================================================================
   # Red: el ALB recibe de internet; la tarea SOLO recibe del ALB
@@ -170,11 +191,16 @@ Resources:
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
+          # Configuracion no sensible: variable de entorno normal.
           Environment:
             - Name: PUERTO
               Value: '8080'
+          # Secreto: ECS lo lee de Secrets Manager al ARRANCAR la tarea y lo
+          # inyecta como variable de entorno. describe-task-definition solo
+          # muestra el ARN, nunca el valor.
+          Secrets:
             - Name: RIOT_API_KEY
-              Value: !Ref RiotApiKey
+              ValueFrom: !Sub '${SecretoClaveRiot}:RIOT_API_KEY::'
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -246,6 +272,12 @@ Resources:
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
 
 Outputs:
+  ArnSecretoClave:
+    Description: >-
+      ARN del secreto con la clave de Riot. Rotar sin tocar el stack:
+      put-secret-value con {"RIOT_API_KEY":"..."} y luego force-new-deployment.
+    Value: !Ref SecretoClaveRiot
+
   DnsAlb:
     Description: DNS del Application Load Balancer
     Value: !GetAtt BalanceadorCargas.DNSName

@@ -273,9 +273,23 @@ Detalles que importan:
   la app. Por eso la plantilla pone CloudFront delante (HTTPS gratis en
   `*.cloudfront.net`): usa esa URL para la demo. La del ALB queda como acceso
   directo y para depurar.
-- **La clave nunca entra en la imagen** (`.dockerignore` excluye `.env`). Viaja
-  como parámetro `NoEcho` del stack y llega a la tarea como variable de entorno.
-  Cuando caduque (24 h), re-corre el script con `--clave` nueva.
+- **La clave vive en Secrets Manager, nunca en texto plano.** No entra en la
+  imagen (`.dockerignore` excluye `.env`), no pasa por parámetros de
+  CloudFormation y no aparece en la task definition: ahí solo queda el ARN del
+  secreto, que ECS lee al arrancar la tarea (`secrets`/`valueFrom`) con un rol
+  que únicamente puede leer ese secreto. Cuesta ~0.40 USD/mes.
+  Para la rotación diaria (las claves de desarrollo caducan cada 24 h) no hace
+  falta re-desplegar: `desplegar.sh --clave RGAPI-nueva`, o directamente
+
+  ```bash
+  SECRETO=$(aws cloudformation describe-stacks --stack-name ranking-lan \
+    --query "Stacks[0].Outputs[?OutputKey=='ArnSecretoClave'].OutputValue" --output text)
+  aws secretsmanager put-secret-value --secret-id "$SECRETO" \
+    --secret-string '{"RIOT_API_KEY":"RGAPI-nueva"}'
+  aws ecs update-service --cluster ranking-lan --service ranking-lan --force-new-deployment
+  ```
+
+  `desplegar.sh --demo` vacía el secreto y la app vuelve al modo demostración.
 - **CloudFront no cachea `/api/*`** (política CachingDisabled con query strings
   íntegras); los estáticos usan CachingOptimized y el script invalida el borde
   en cada actualización.

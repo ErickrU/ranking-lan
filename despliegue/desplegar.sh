@@ -3,16 +3,21 @@
 # Ranking LAN · despliegue a AWS (ECR + Fargate + ALB, CloudFront opcional)
 #
 # Uso:
-#   bash despliegue/desplegar.sh                     # demo, con HTTPS (CloudFront)
-#   bash despliegue/desplegar.sh --clave RGAPI-...   # con datos reales de Riot
+#   bash despliegue/desplegar.sh                     # despliega; la clave actual no cambia
+#   bash despliegue/desplegar.sh --clave RGAPI-...   # ademas guarda la clave en Secrets Manager
+#   bash despliegue/desplegar.sh --demo              # borra la clave (vuelve a modo demostracion)
 #   bash despliegue/desplegar.sh --https no          # solo ALB, sin CloudFront
 #
 # Es idempotente: la primera vez crea todo; las siguientes construye una nueva
 # imagen, la sube y actualiza el stack (ECS hace rolling deploy).
 #
-# La clave se toma de --clave, o de $RIOT_API_KEY, o del .env local. Nunca se
-# hornea en la imagen (.dockerignore la excluye): viaja como parametro NoEcho
-# del stack y llega a la tarea como variable de entorno.
+# La clave (de --clave, $RIOT_API_KEY o el .env local) NUNCA se hornea en la
+# imagen ni pasa por CloudFormation: se escribe en el secreto de Secrets
+# Manager que crea el stack, y ECS la inyecta al arrancar la tarea. Para rotar
+# la clave diaria sin reconstruir nada tambien sirve:
+#   aws secretsmanager put-secret-value --secret-id <ARN> \
+#     --secret-string '{"RIOT_API_KEY":"RGAPI-nueva"}'
+#   aws ecs update-service --cluster ranking-lan --service ranking-lan --force-new-deployment
 # ============================================================================
 set -euo pipefail
 
@@ -25,6 +30,7 @@ PLANTILLA="$RAIZ/despliegue/plantilla.yaml"
 PILA="ranking-lan"
 HTTPS="si"
 CLAVE="${RIOT_API_KEY:-}"
+MODO_DEMO="no"
 REGION="${AWS_REGION:-$(aws configure get region 2>/dev/null || true)}"
 
 while [[ $# -gt 0 ]]; do
@@ -33,6 +39,7 @@ while [[ $# -gt 0 ]]; do
     --region) REGION="$2"; shift 2 ;;
     --https)  HTTPS="$2"; shift 2 ;;
     --clave)  CLAVE="$2"; shift 2 ;;
+    --demo)   MODO_DEMO="si"; shift ;;
     *) echo "Parametro desconocido: $1" >&2; exit 1 ;;
   esac
 done
@@ -54,8 +61,13 @@ REGISTRO="$CUENTA.dkr.ecr.$REGION.amazonaws.com"
 REPO="ranking-lan"
 
 echo "Cuenta $CUENTA · region $REGION · stack $PILA · https $HTTPS"
-[[ -n "$CLAVE" ]] && echo "Clave de Riot: detectada (se pasa como parametro NoEcho)" \
-                  || echo "Clave de Riot: no configurada -> la app corre en modo demostracion"
+if [[ "$MODO_DEMO" == "si" ]]; then
+  echo "Clave de Riot: se BORRARA del secreto (la app vuelve a modo demostracion)"
+elif [[ -n "$CLAVE" ]]; then
+  echo "Clave de Riot: detectada -> se guardara en Secrets Manager tras el despliegue"
+else
+  echo "Clave de Riot: sin cambios (la que este en Secrets Manager se conserva)"
+fi
 
 # ----------------------------------------------------------------------------
 # Arquitectura: la imagen debe coincidir con la plataforma de Fargate
@@ -110,7 +122,6 @@ PARAMETROS=(
   "SubnetIds=$SUBREDES"
   "Arquitectura=$ARQUITECTURA"
   "HabilitarHttps=$HTTPS"
-  "RiotApiKey=$CLAVE"
 )
 
 echo "Desplegando el stack (la primera vez tarda ~8 min; CloudFront suma unos minutos)..."
@@ -136,6 +147,33 @@ valor() { node -e 'const s=JSON.parse(process.argv[1]);const o=s.find(x=>x.Outpu
 URL_ALB="$(valor UrlAlb)"
 URL_HTTPS="$(valor UrlHttps)"
 DISTRIBUCION="$(valor IdDistribucion)"
+SECRETO="$(valor ArnSecretoClave)"
+
+# ----------------------------------------------------------------------------
+# Clave de Riot: se escribe DIRECTO en Secrets Manager (nunca via CloudFormation)
+# y se relanza el servicio para que las tareas nuevas la lean al arrancar.
+# ----------------------------------------------------------------------------
+if [[ "$MODO_DEMO" == "si" || -n "$CLAVE" ]]; then
+  if [[ "$MODO_DEMO" == "si" ]]; then
+    CUERPO_SECRETO='{"RIOT_API_KEY":""}'
+  else
+    # JSON construido por node: la clave no se interpola a mano en el string.
+    CUERPO_SECRETO="$(CLAVE_RIOT="$CLAVE" node -e \
+      'console.log(JSON.stringify({ RIOT_API_KEY: process.env.CLAVE_RIOT }))')"
+  fi
+
+  aws secretsmanager put-secret-value \
+    --secret-id "$SECRETO" \
+    --secret-string "$CUERPO_SECRETO" \
+    --region "$REGION" --query 'VersionId' --output text >/dev/null
+  echo "Secreto actualizado. Relanzando el servicio para que lo lea..."
+
+  aws ecs update-service --cluster "$PILA" --service "$PILA" \
+    --force-new-deployment --region "$REGION" \
+    --query 'service.serviceName' --output text >/dev/null
+  aws ecs wait services-stable --cluster "$PILA" --services "$PILA" --region "$REGION"
+  echo "Servicio estable con la clave nueva."
+fi
 
 # En actualizaciones, invalida la cache del borde para servir la version nueva.
 if [[ -n "$DISTRIBUCION" ]]; then
@@ -157,5 +195,11 @@ echo "  ALB (HTTP)        $URL_ALB"
 }
 echo
 echo "  Salud:    ${URL_ALB}api/estado"
+echo
+echo "  Rotar la clave (caduca cada 24 h) sin re-desplegar:"
+echo "    aws secretsmanager put-secret-value --secret-id '$SECRETO' \\"
+echo "      --secret-string '{\"RIOT_API_KEY\":\"RGAPI-nueva\"}'"
+echo "    aws ecs update-service --cluster $PILA --service $PILA --force-new-deployment"
+echo
 echo "  Eliminar: bash despliegue/eliminar.sh"
 echo "============================================================"
