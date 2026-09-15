@@ -64,11 +64,49 @@ const CONFIG = {
 };
 
 const COLAS_VALIDAS = new Set(['RANKED_SOLO_5x5', 'RANKED_FLEX_SR']);
+
+/** Ligas de la elite: un solo listado por cola, sin divisiones. */
 const TIERS_VALIDOS = {
   CHALLENGER: 'challengerleagues',
   GRANDMASTER: 'grandmasterleagues',
   MASTER: 'masterleagues',
 };
+
+/** Ligas con divisiones I-IV: se consultan con league-v4 entries. */
+const TIERS_MENORES = new Set(['DIAMOND', 'EMERALD', 'PLATINUM', 'GOLD', 'SILVER', 'BRONZE', 'IRON']);
+const DIVISIONES = new Set(['I', 'II', 'III', 'IV']);
+
+/** Tope de filas por listado: Maestro en KR trae miles y la respuesta pesaria MB. */
+const MAX_LISTADO = 500;
+
+/**
+ * Plataformas soportadas y su ruteo regional:
+ *  - cuenta: account-v1 (americas | europe | asia)
+ *  - partidas: match-v5 (americas | europe | asia | sea)
+ */
+const REGIONES = {
+  la1: { cuenta: 'americas', partidas: 'americas' },
+  la2: { cuenta: 'americas', partidas: 'americas' },
+  na1: { cuenta: 'americas', partidas: 'americas' },
+  br1: { cuenta: 'americas', partidas: 'americas' },
+  euw1: { cuenta: 'europe', partidas: 'europe' },
+  eun1: { cuenta: 'europe', partidas: 'europe' },
+  tr1: { cuenta: 'europe', partidas: 'europe' },
+  ru: { cuenta: 'europe', partidas: 'europe' },
+  me1: { cuenta: 'europe', partidas: 'europe' },
+  kr: { cuenta: 'asia', partidas: 'asia' },
+  jp1: { cuenta: 'asia', partidas: 'asia' },
+  oc1: { cuenta: 'asia', partidas: 'sea' },
+  sg2: { cuenta: 'asia', partidas: 'sea' },
+  tw2: { cuenta: 'asia', partidas: 'sea' },
+  vn2: { cuenta: 'asia', partidas: 'sea' },
+};
+
+/** Lee y valida ?region=; sin parametro usa la plataforma por defecto. */
+function regionDe(url) {
+  const region = (url.searchParams.get('region') ?? CONFIG.plataforma).toLowerCase();
+  return region in REGIONES ? region : null;
+}
 
 /* ==========================================================================
    Cache en memoria
@@ -95,10 +133,19 @@ class ErrorRiot extends Error {
   }
 }
 
-async function pedirARiot(url) {
+async function pedirARiot(url, permitirReintento = true) {
   if (Date.now() < esperarHasta) {
-    const segundos = Math.ceil((esperarHasta - Date.now()) / 1000);
-    throw new ErrorRiot(`Límite de peticiones activo, reintenta en ${segundos} s`, 429, segundos);
+    const faltanMs = esperarHasta - Date.now();
+    // Espera corta (limite por segundo): aguantamos en vez de fallar.
+    if (permitirReintento && faltanMs <= 2500) {
+      await new Promise((r) => setTimeout(r, faltanMs + 250));
+      return pedirARiot(url, false);
+    }
+    throw new ErrorRiot(
+      `Límite de peticiones activo, reintenta en ${Math.ceil(faltanMs / 1000)} s`,
+      429,
+      Math.ceil(faltanMs / 1000),
+    );
   }
 
   const respuesta = await fetch(url, {
@@ -109,6 +156,12 @@ async function pedirARiot(url) {
   if (respuesta.status === 429) {
     const espera = Number(respuesta.headers.get('Retry-After') ?? 10);
     esperarHasta = Date.now() + espera * 1000;
+    // Un 429 con Retry-After de 1-2 s es el limite POR SEGUNDO: se reintenta
+    // una vez en silencio en lugar de degradar la respuesta a demo.
+    if (permitirReintento && espera <= 2) {
+      await new Promise((r) => setTimeout(r, espera * 1000 + 250));
+      return pedirARiot(url, false);
+    }
     throw new ErrorRiot(`Riot devolvió 429 (rate limit). Espera ${espera} s.`, 429, espera);
   }
 
@@ -133,20 +186,22 @@ async function enLotes(elementos, tamanoLote, tarea) {
   for (let i = 0; i < elementos.length; i += tamanoLote) {
     const lote = elementos.slice(i, i + tamanoLote);
     salida.push(...(await Promise.all(lote.map(tarea))));
-    // Pausa corta entre lotes: la clave de desarrollo permite 20 peticiones/s.
-    if (i + tamanoLote < elementos.length) await new Promise((r) => setTimeout(r, 120));
+    // Pausa entre lotes: la clave de desarrollo permite 20 peticiones/s y las
+    // rafagas de nombres compiten con el resto del trafico. 5 cada 500 ms
+    // deja el pico en ~10/s, con margen.
+    if (i + tamanoLote < elementos.length) await new Promise((r) => setTimeout(r, 500));
   }
   return salida;
 }
 
-/** puuid -> Riot ID (gameName#tagLine) usando account-v1. */
-async function resolverRiotId(puuid) {
+/** puuid -> Riot ID (gameName#tagLine) usando account-v1 en el ruteo indicado. */
+async function resolverRiotId(puuid, ruteoCuenta) {
   const guardado = cacheNombres.get(puuid);
   if (guardado && Date.now() - guardado.momento < TTL_NOMBRES_MS) return guardado.valor;
 
   try {
     const cuenta = await pedirARiot(
-      `https://${CONFIG.region}.api.riotgames.com/riot/account/v1/accounts/by-puuid/${encodeURIComponent(puuid)}`,
+      `https://${ruteoCuenta}.api.riotgames.com/riot/account/v1/accounts/by-puuid/${encodeURIComponent(puuid)}`,
     );
     const valor = { nombre: cuenta.gameName ?? '', tag: cuenta.tagLine ?? '' };
     cacheNombres.set(puuid, { valor, momento: Date.now() });
@@ -158,42 +213,120 @@ async function resolverRiotId(puuid) {
   }
 }
 
+/** Nombre ya resuelto y vigente en cache, o null (sin llamar a Riot). */
+function nombreEnCache(puuid) {
+  const guardado = cacheNombres.get(puuid);
+  return guardado && Date.now() - guardado.momento < TTL_NOMBRES_MS ? guardado.valor : null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Resolucion de nombres en SEGUNDO PLANO.
+ *
+ * Mostrar el listado completo (hasta 500 filas) es una sola llamada a
+ * league-v4, pero cada Riot ID cuesta una llamada a account-v1 y una clave
+ * de desarrollo solo permite 100 peticiones cada 2 minutos. Estrategia:
+ * los primeros CONFIG.top nombres se resuelven en el momento; el resto se
+ * encola aqui y se resuelve despacio (lotes de 5 cada 7 s ~ 85/2 min),
+ * llenando la cache para las siguientes peticiones.
+ * ------------------------------------------------------------------ */
+const colaNombres = [];
+const enColaNombres = new Set();
+let resolviendoNombres = false;
+
+function encolarNombres(entradas, ruteoCuenta) {
+  for (const entrada of entradas) {
+    const puuid = entrada.puuid;
+    if (!puuid || enColaNombres.has(puuid) || nombreEnCache(puuid)) continue;
+    if (colaNombres.length >= 1000) break; // no crecer sin limite
+    colaNombres.push({ puuid, ruteoCuenta });
+    enColaNombres.add(puuid);
+  }
+  procesarColaNombres();
+}
+
+async function procesarColaNombres() {
+  if (resolviendoNombres || !CONFIG.clave) return;
+  resolviendoNombres = true;
+  try {
+    while (colaNombres.length > 0) {
+      if (Date.now() < esperarHasta) {
+        await new Promise((r) => setTimeout(r, esperarHasta - Date.now() + 1000));
+      }
+      const lote = colaNombres.splice(0, 5);
+      await Promise.allSettled(
+        lote.map(({ puuid, ruteoCuenta }) =>
+          resolverRiotId(puuid, ruteoCuenta).finally(() => enColaNombres.delete(puuid)),
+        ),
+      );
+      // Ritmo prudente: 5 cada 15 s = ~40 de las 100 peticiones/2 min de una
+      // clave de desarrollo. El resto del presupuesto queda para el trafico
+      // interactivo (un listado nuevo cuesta ~26 llamadas).
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+  } finally {
+    resolviendoNombres = false;
+  }
+}
+
 /**
- * Descarga un listado real del ladder de LAN y lo normaliza a la forma que
- * espera la PWA (la misma que usa datos/ranking-lan.json).
+ * Descarga un listado real del ladder y lo normaliza a la forma que espera
+ * la PWA. Para la elite (Retador/GM/Maestro) usa las ligas completas; para
+ * Diamante e inferiores usa league-v4 entries con division (pagina 1).
+ *
+ * Devuelve TODAS las filas (hasta MAX_LISTADO). Los nombres de los primeros
+ * CONFIG.top se resuelven aqui; el resto sale de cache o se encola para el
+ * resolvedor en segundo plano y llega como riotId=null mientras tanto.
  */
-async function obtenerListadoReal(cola, tier, top) {
-  const recurso = TIERS_VALIDOS[tier];
-  const liga = await pedirARiot(
-    `https://${CONFIG.plataforma}.api.riotgames.com/lol/league/v4/${recurso}/by-queue/${cola}`,
-  );
+async function obtenerListadoReal(region, cola, tier, division) {
+  const ruteo = REGIONES[region];
+  let entradas;
+  let nombreLiga = null;
 
-  const entradas = [...(liga.entries ?? [])]
+  if (tier in TIERS_VALIDOS) {
+    const liga = await pedirARiot(
+      `https://${region}.api.riotgames.com/lol/league/v4/${TIERS_VALIDOS[tier]}/by-queue/${cola}`,
+    );
+    entradas = liga.entries ?? [];
+    nombreLiga = liga.name ?? null;
+  } else {
+    entradas = await pedirARiot(
+      `https://${region}.api.riotgames.com/lol/league/v4/entries/${cola}/${tier}/${division}?page=1`,
+    );
+  }
+
+  entradas = [...entradas]
     .sort((a, b) => (b.leaguePoints ?? 0) - (a.leaguePoints ?? 0))
-    .slice(0, top);
+    .slice(0, MAX_LISTADO);
 
-  // Riot ID en lotes de 5. summonerName quedo obsoleto en noviembre de 2023,
-  // asi que el nombre visible se resuelve con account-v1 a partir del puuid.
-  const nombres = await enLotes(entradas, 5, (entrada) =>
-    entrada.puuid ? resolverRiotId(entrada.puuid) : Promise.resolve(null),
+  // summonerName quedo obsoleto en noviembre de 2023: el nombre visible se
+  // resuelve con account-v1 a partir del puuid, solo para la cabeza del listado.
+  // Un 429 al resolver UN nombre no debe tumbar el listado completo: ese
+  // nombre queda pendiente (placeholder) y lo recoge la cola en segundo plano.
+  const cabeza = entradas.slice(0, CONFIG.top);
+  const nombresCabeza = await enLotes(cabeza, 5, (entrada) =>
+    entrada.puuid
+      ? resolverRiotId(entrada.puuid, ruteo.cuenta).catch(() => null)
+      : Promise.resolve(null),
   );
+  // Se encola TODO: los ya resueltos se descartan solos (estan en cache) y
+  // los de la cabeza que fallaron por rate limit reciben otra oportunidad.
+  encolarNombres(entradas, ruteo.cuenta);
 
+  let pendientes = 0;
   const jugadores = entradas.map((entrada, i) => {
-    const identidad = nombres[i];
-    const nombre = identidad?.nombre || entrada.summonerName || '';
+    const identidad = i < cabeza.length ? nombresCabeza[i] : nombreEnCache(entrada.puuid);
+    const nombre = identidad?.nombre || '';
     const tag = identidad?.tag || '';
-    const etiqueta = nombre
-      ? (tag ? `${nombre}#${tag}` : nombre)
-      : `Invocador ${entrada.puuid ? entrada.puuid.slice(0, 6) : i + 1}`;
+    if (!nombre) pendientes++;
 
     return {
       puesto: i + 1,
-      riotId: etiqueta,
-      nombre: nombre || etiqueta,
+      riotId: nombre ? (tag ? `${nombre}#${tag}` : nombre) : null,
+      nombre: nombre || null,
       tag,
       puuid: entrada.puuid ?? null,
-      tier: liga.tier ?? tier,
-      division: entrada.rank ?? 'I',
+      tier: entrada.tier ?? tier,
+      division: entrada.rank ?? division,
       lp: entrada.leaguePoints ?? 0,
       victorias: entrada.wins ?? 0,
       derrotas: entrada.losses ?? 0,
@@ -208,14 +341,15 @@ async function obtenerListadoReal(cola, tier, top) {
   return {
     esquema: 1,
     fuente: 'vivo',
-    region: 'LAN',
-    regionNombre: 'Latinoamérica Norte',
-    plataforma: CONFIG.plataforma,
+    region: region.toUpperCase(),
+    plataforma: region,
     cola,
     tier,
-    liga: liga.name ?? null,
+    division: tier in TIERS_VALIDOS ? 'I' : division,
+    liga: nombreLiga,
     actualizado: new Date().toISOString(),
     total: jugadores.length,
+    nombresPendientes: pendientes,
     jugadores,
   };
 }
@@ -226,21 +360,69 @@ async function obtenerListadoReal(cola, tier, top) {
 
 let demoEnMemoria = null;
 
-async function obtenerListadoDemo(cola, tier, top, motivo) {
+/** Mini generador de nombres para los listados demo de ligas menores. */
+const PREFIJOS_DEMO = ['Sombra', 'Jaguar', 'Condor', 'Volcan', 'Trueno', 'Colibri', 'Puma', 'Halcon', 'Marea', 'Bruma', 'Nopal', 'Coyote'];
+const SUFIJOS_DEMO = ['Veloz', 'Eterno', 'Astral', 'Dorado', 'Feroz', 'Sereno', 'Bravo', 'Fugaz', 'Glacial', 'Radiante'];
+
+/**
+ * Listado demo determinista para Diamante e inferiores (la semilla estatica
+ * solo trae la elite). Mismo region+cola+tier+division => mismos jugadores.
+ */
+function listadoDemoMenor(region, cola, tier, division) {
+  const al = crearAleatorio(hashCadena(`${region}|${cola}|${tier}|${division}`));
+  const cantidad = 60 + Math.floor(al() * 40);
+  const vistos = new Set();
+  const jugadores = [];
+
+  for (let i = 0; i < cantidad; i++) {
+    let nombre;
+    do {
+      nombre = `${PREFIJOS_DEMO[Math.floor(al() * PREFIJOS_DEMO.length)]}${SUFIJOS_DEMO[Math.floor(al() * SUFIJOS_DEMO.length)]}${Math.floor(al() * 99)}`;
+    } while (vistos.has(nombre));
+    vistos.add(nombre);
+
+    const partidas = 30 + Math.floor(al() * 300);
+    const victorias = Math.round(partidas * (0.42 + al() * 0.18));
+    jugadores.push({
+      puesto: i + 1,
+      riotId: `${nombre}#${region.toUpperCase()}`,
+      nombre,
+      tag: region.toUpperCase(),
+      puuid: null,
+      tier,
+      division,
+      lp: 99 - Math.floor((i / cantidad) * 100),
+      victorias,
+      derrotas: partidas - victorias,
+      racha: al() < 0.12,
+      veterano: al() < 0.2,
+      nuevo: al() < 0.1,
+      inactivo: al() < 0.05,
+      cola,
+    });
+  }
+  return jugadores;
+}
+
+async function obtenerListadoDemo(region, cola, tier, division, motivo) {
   demoEnMemoria ??= JSON.parse(await readFile(join(RAIZ, 'datos', 'ranking-lan.json'), 'utf8'));
 
-  const jugadores = (demoEnMemoria.listados?.[`${cola}|${tier}`] ?? []).slice(0, top);
+  const jugadores = tier in TIERS_VALIDOS
+    ? (demoEnMemoria.listados?.[`${cola}|${tier}`] ?? [])
+    : listadoDemoMenor(region, cola, tier, division);
+
   return {
     esquema: 1,
     fuente: 'demo',
     aviso: motivo ?? demoEnMemoria.aviso,
-    region: 'LAN',
-    regionNombre: 'Latinoamérica Norte',
-    plataforma: CONFIG.plataforma,
+    region: region.toUpperCase(),
+    plataforma: region,
     cola,
     tier,
+    division: tier in TIERS_VALIDOS ? 'I' : division,
     actualizado: demoEnMemoria.actualizado,
     total: jugadores.length,
+    nombresPendientes: 0,
     jugadores,
   };
 }
@@ -250,14 +432,21 @@ async function obtenerListadoDemo(cola, tier, top, motivo) {
    ========================================================================== */
 
 async function manejarRanking(url, respuesta) {
+  const region = regionDe(url);
   const cola = url.searchParams.get('cola') ?? 'RANKED_SOLO_5x5';
   const tier = (url.searchParams.get('tier') ?? 'CHALLENGER').toUpperCase();
-  const top = Math.min(Math.max(Number(url.searchParams.get('top')) || CONFIG.top, 1), 200);
+  const division = (url.searchParams.get('division') ?? 'I').toUpperCase();
 
+  if (!region) return json(respuesta, 400, { error: `Región no válida: ${url.searchParams.get('region')}` });
   if (!COLAS_VALIDAS.has(cola)) return json(respuesta, 400, { error: `Cola no válida: ${cola}` });
-  if (!(tier in TIERS_VALIDOS)) return json(respuesta, 400, { error: `Liga no válida: ${tier}` });
+  if (!(tier in TIERS_VALIDOS) && !TIERS_MENORES.has(tier)) {
+    return json(respuesta, 400, { error: `Liga no válida: ${tier}` });
+  }
+  if (TIERS_MENORES.has(tier) && !DIVISIONES.has(division)) {
+    return json(respuesta, 400, { error: `División no válida: ${division}` });
+  }
 
-  const claveCache = `${cola}|${tier}|${top}`;
+  const claveCache = `${region}|${cola}|${tier}|${division}`;
   const guardado = cacheListados.get(claveCache);
   if (guardado && Date.now() - guardado.momento < CONFIG.ttlMs) {
     return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'memoria' });
@@ -266,7 +455,7 @@ async function manejarRanking(url, respuesta) {
   // Sin clave: servimos la demo. La PWA lo indica en la interfaz.
   if (!CONFIG.clave) {
     const demo = await obtenerListadoDemo(
-      cola, tier, top,
+      region, cola, tier, division,
       'No hay RIOT_API_KEY configurada en el servidor, así que estos son datos de ' +
       'demostración con Riot ID ficticios. Consulta el README para conectar la API real.',
     );
@@ -274,11 +463,11 @@ async function manejarRanking(url, respuesta) {
   }
 
   try {
-    const listado = await obtenerListadoReal(cola, tier, top);
+    const listado = await obtenerListadoReal(region, cola, tier, division);
     cacheListados.set(claveCache, { valor: listado, momento: Date.now() });
     return json(respuesta, 200, listado, { 'X-Ranking-Cache': 'red' });
   } catch (error) {
-    console.error(`[proxy] ${error.message}`);
+    console.error(`[proxy] ranking ${claveCache}: ${error.message}`);
 
     // Si teniamos algo en cache, aunque este vencido, es mejor que un error.
     if (guardado) {
@@ -287,7 +476,7 @@ async function manejarRanking(url, respuesta) {
 
     // Ultimo recurso: la demo, explicando por que.
     const demo = await obtenerListadoDemo(
-      cola, tier, top,
+      region, cola, tier, division,
       `No se pudo consultar la API de Riot (${error.message}). Se muestran datos de demostración.`,
     );
     return json(respuesta, 200, demo, { 'X-Ranking-Cache': 'demo-por-error' });
@@ -379,6 +568,9 @@ function entradaDemo(riotId, cola) {
 /* --- El endpoint ---------------------------------------------------------- */
 
 async function manejarJugador(url, respuesta) {
+  const region = regionDe(url);
+  if (!region) return json(respuesta, 400, { error: `Región no válida: ${url.searchParams.get('region')}` });
+
   const bruto = (url.searchParams.get('riotId') ?? '').trim();
   if (bruto.length > 40) return json(respuesta, 400, { error: 'Riot ID demasiado largo' });
 
@@ -390,42 +582,41 @@ async function manejarJugador(url, respuesta) {
   }
   const { nombre, tag } = partes;
 
-  const claveCache = `jugador|${nombre.toLowerCase()}#${tag.toLowerCase()}`;
+  const claveCache = `jugador|${region}|${nombre.toLowerCase()}#${tag.toLowerCase()}`;
   const guardado = cacheListados.get(claveCache);
   if (guardado && Date.now() - guardado.momento < CONFIG.ttlMs) {
     return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'memoria' });
   }
 
-  // Sin clave: rango ficticio pero estable para cada Riot ID.
+  // Sin clave: rango ficticio pero estable para cada Riot ID y region.
   if (!CONFIG.clave) {
     const riotId = `${nombre}#${tag.toUpperCase()}`;
     return json(respuesta, 200, {
       esquema: 1,
       fuente: 'demo',
       aviso: 'Sin RIOT_API_KEY en el servidor: los rangos del grupo son ficticios (aunque estables para cada Riot ID).',
-      region: 'LAN',
-      regionNombre: 'Latinoamérica Norte',
-      plataforma: CONFIG.plataforma,
+      region: region.toUpperCase(),
+      plataforma: region,
       riotId,
       puuid: null,
       actualizado: new Date().toISOString(),
       colas: {
-        RANKED_SOLO_5x5: entradaDemo(riotId, 'RANKED_SOLO_5x5'),
-        RANKED_FLEX_SR: entradaDemo(riotId, 'RANKED_FLEX_SR'),
+        RANKED_SOLO_5x5: entradaDemo(`${region}|${riotId}`, 'RANKED_SOLO_5x5'),
+        RANKED_FLEX_SR: entradaDemo(`${region}|${riotId}`, 'RANKED_FLEX_SR'),
       },
     }, { 'X-Ranking-Cache': 'demo' });
   }
 
   try {
-    // 1. Riot ID -> puuid (account-v1, ruteo regional).
+    // 1. Riot ID -> puuid (account-v1, ruteo regional de la region elegida).
     const cuenta = await pedirARiot(
-      `https://${CONFIG.region}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/` +
+      `https://${REGIONES[region].cuenta}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/` +
       `${encodeURIComponent(nombre)}/${encodeURIComponent(tag)}`,
     );
 
-    // 2. puuid -> entradas clasificatorias en la plataforma (league-v4).
+    // 2. puuid -> entradas clasificatorias en la plataforma elegida (league-v4).
     const entradas = await pedirARiot(
-      `https://${CONFIG.plataforma}.api.riotgames.com/lol/league/v4/entries/by-puuid/` +
+      `https://${region}.api.riotgames.com/lol/league/v4/entries/by-puuid/` +
       encodeURIComponent(cuenta.puuid),
     );
 
@@ -448,9 +639,8 @@ async function manejarJugador(url, respuesta) {
     const valor = {
       esquema: 1,
       fuente: 'vivo',
-      region: 'LAN',
-      regionNombre: 'Latinoamérica Norte',
-      plataforma: CONFIG.plataforma,
+      region: region.toUpperCase(),
+      plataforma: region,
       riotId: `${cuenta.gameName ?? nombre}#${cuenta.tagLine ?? tag.toUpperCase()}`,
       puuid: cuenta.puuid,
       actualizado: new Date().toISOString(),
@@ -465,6 +655,123 @@ async function manejarJugador(url, respuesta) {
     }
 
     console.error(`[proxy] jugador ${nombre}#${tag}: ${error.message}`);
+    if (guardado) return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'vencida' });
+    return json(respuesta, error.estado === 429 ? 429 : 502, { error: error.message });
+  }
+}
+
+/* ==========================================================================
+   Endpoint /api/historial · mini historial de partidas (seccion "Mi grupo")
+   --------------------------------------------------------------------------
+   Con clave: match-v5 en el ruteo regional de la region (1 llamada por la
+   lista de ids + 1 por partida). Sin clave: historial ficticio determinista.
+   Se cachea por puuid+region durante el mismo TTL del resto.
+   ========================================================================== */
+
+const CAMPEONES_DEMO = [
+  'Ahri', 'Yasuo', 'Jinx', 'Thresh', 'LeeSin', 'Lux', 'Zed', 'Ekko', 'Vi',
+  'Caitlyn', 'Ezreal', 'Leona', 'Darius', 'Garen', 'Katarina', 'Ashe',
+  'Morgana', 'Sett', 'Viego', 'Samira', 'KSante', 'Milio', 'Briar', 'Aurora',
+];
+
+function historialDemo(semillaTexto) {
+  const al = crearAleatorio(hashCadena(`historial|${semillaTexto}`));
+  const cuantas = 5 + Math.floor(al() * 2); // 5 o 6
+  const partidas = [];
+  let hace = 1 + al() * 5; // horas desde la ultima partida
+
+  for (let i = 0; i < cuantas; i++) {
+    const victoria = al() < 0.52;
+    const muertes = 1 + Math.floor(al() * 9);
+    const duracionSeg = Math.round((20 + al() * 18) * 60);
+    partidas.push({
+      campeon: CAMPEONES_DEMO[Math.floor(al() * CAMPEONES_DEMO.length)],
+      victoria,
+      k: Math.floor(al() * (victoria ? 14 : 9)),
+      d: victoria ? Math.max(1, muertes - 3) : muertes,
+      a: Math.floor(al() * 16),
+      cs: Math.round((4 + al() * 4.5) * (duracionSeg / 60)),
+      duracionSeg,
+      cola: al() < 0.7 ? 420 : 440,
+      posicion: ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'][Math.floor(al() * 5)],
+      terminada: new Date(Date.now() - hace * 3600_000).toISOString(),
+    });
+    hace += 0.7 + al() * 30; // partidas cada vez mas antiguas
+  }
+  return partidas;
+}
+
+async function manejarHistorial(url, respuesta) {
+  const region = regionDe(url);
+  if (!region) return json(respuesta, 400, { error: `Región no válida: ${url.searchParams.get('region')}` });
+
+  const puuid = (url.searchParams.get('puuid') ?? '').trim();
+  // En modo demo los perfiles no tienen puuid: el riotId sirve de semilla.
+  const semilla = puuid || (url.searchParams.get('riotId') ?? '').trim();
+  if (!semilla) return json(respuesta, 400, { error: 'Falta puuid o riotId' });
+  if (puuid && !/^[\w-]{20,100}$/.test(puuid)) {
+    return json(respuesta, 400, { error: 'puuid no válido' });
+  }
+
+  const claveCache = `historial|${region}|${semilla.toLowerCase()}`;
+  const guardado = cacheListados.get(claveCache);
+  if (guardado && Date.now() - guardado.momento < CONFIG.ttlMs) {
+    return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'memoria' });
+  }
+
+  if (!CONFIG.clave || !puuid) {
+    return json(respuesta, 200, {
+      esquema: 1,
+      fuente: 'demo',
+      region: region.toUpperCase(),
+      actualizado: new Date().toISOString(),
+      partidas: historialDemo(`${region}|${semilla.toLowerCase()}`),
+    }, { 'X-Ranking-Cache': 'demo' });
+  }
+
+  try {
+    const ruteo = REGIONES[region].partidas;
+    const ids = await pedirARiot(
+      `https://${ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/` +
+      `${encodeURIComponent(puuid)}/ids?type=ranked&count=6`,
+    );
+
+    const detalles = await enLotes(ids ?? [], 3, (id) =>
+      pedirARiot(`https://${ruteo}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(id)}`)
+        .catch(() => null),
+    );
+
+    const partidas = [];
+    for (const partida of detalles) {
+      const yo = partida?.info?.participants?.find((p) => p.puuid === puuid);
+      if (!yo) continue;
+      partidas.push({
+        campeon: yo.championName ?? '—',
+        victoria: Boolean(yo.win),
+        k: yo.kills ?? 0,
+        d: yo.deaths ?? 0,
+        a: yo.assists ?? 0,
+        cs: (yo.totalMinionsKilled ?? 0) + (yo.neutralMinionsKilled ?? 0),
+        duracionSeg: partida.info.gameDuration ?? 0,
+        cola: partida.info.queueId ?? 0,
+        posicion: yo.teamPosition || yo.individualPosition || '',
+        terminada: partida.info.gameEndTimestamp
+          ? new Date(partida.info.gameEndTimestamp).toISOString()
+          : null,
+      });
+    }
+
+    const valor = {
+      esquema: 1,
+      fuente: 'vivo',
+      region: region.toUpperCase(),
+      actualizado: new Date().toISOString(),
+      partidas,
+    };
+    cacheListados.set(claveCache, { valor, momento: Date.now() });
+    return json(respuesta, 200, valor, { 'X-Ranking-Cache': 'red' });
+  } catch (error) {
+    console.error(`[proxy] historial ${region}: ${error.message}`);
     if (guardado) return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'vencida' });
     return json(respuesta, error.estado === 429 ? 429 : 502, { error: error.message });
   }
@@ -552,16 +859,19 @@ const servidor = createServer(async (peticion, respuesta) => {
   try {
     if (url.pathname === '/api/ranking') return await manejarRanking(url, respuesta);
     if (url.pathname === '/api/jugador') return await manejarJugador(url, respuesta);
+    if (url.pathname === '/api/historial') return await manejarHistorial(url, respuesta);
 
     if (url.pathname === '/api/estado') {
       return json(respuesta, 200, {
         ok: true,
         claveConfigurada: Boolean(CONFIG.clave),
         plataforma: CONFIG.plataforma,
+        regiones: Object.keys(REGIONES),
         top: CONFIG.top,
         ttlSegundos: CONFIG.ttlMs / 1000,
         listadosEnCache: [...cacheListados.keys()],
         nombresEnCache: cacheNombres.size,
+        nombresEnCola: colaNombres.length,
       });
     }
 

@@ -1,12 +1,17 @@
 # Ranking LAN · PWA
 
-Aplicación web progresiva con el ranking de los mejores jugadores de **League of Legends**
-en la región **LAN** (Latinoamérica Norte, plataforma `la1`): Retador, Gran Maestro y Maestro,
-en las colas Solo/Dúo y Flexible.
+Aplicación web progresiva con el ranking de los mejores jugadores de **League of Legends**,
+consultable en **15 regiones** (LAN, LAS, NA, BR, EUW, EUNE, TR, RU, ME, KR, JP, OCE, SG,
+TW, VN) y en **todas las ligas**: de Hierro a Retador (bajo Maestro, con su selector de
+división), en las colas Solo/Dúo y Flexible. La interfaz está en **español e inglés**,
+conmutables al vuelo.
 
 Es instalable, funciona sin conexión y no expone ninguna credencial en el navegador.
-Además del ladder global incluye **Mi grupo**: una clasificación privada entre amigos,
-agregados por Riot ID y ordenados por su rango real (liga → división → LP).
+Además del ladder regional incluye **Mi grupo**: una clasificación privada entre amigos,
+agregados por Riot ID (nombre y tag en campos separados) y ordenados por su rango real
+(liga → división → LP). El detalle de cada integrante suma su **mini historial de
+partidas** (match-v5), la **comparación contra el promedio del grupo** y **consejos**
+generados a partir de esos números.
 
 ---
 
@@ -88,12 +93,23 @@ para que la PWA y `/api/ranking` compartan origen (requisito para el alcance del
 
 | Qué | Endpoint |
 |---|---|
-| Ladder por liga | `GET https://la1.api.riotgames.com/lol/league/v4/{challenger\|grandmaster\|master}leagues/by-queue/{cola}` |
-| Riot ID desde el puuid | `GET https://americas.api.riotgames.com/riot/account/v1/accounts/by-puuid/{puuid}` |
-| puuid desde el Riot ID (Mi grupo) | `GET https://americas.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{nombre}/{tag}` |
-| Rango de un jugador (Mi grupo) | `GET https://la1.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}` |
+| Ladder de la élite | `GET https://{region}.api.riotgames.com/lol/league/v4/{challenger\|grandmaster\|master}leagues/by-queue/{cola}` |
+| Ladder bajo Maestro | `GET https://{region}.api.riotgames.com/lol/league/v4/entries/{cola}/{tier}/{division}?page=1` |
+| Riot ID desde el puuid | `GET https://{ruteo}.api.riotgames.com/riot/account/v1/accounts/by-puuid/{puuid}` |
+| puuid desde el Riot ID (Mi grupo) | `GET https://{ruteo}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{nombre}/{tag}` |
+| Rango de un jugador (Mi grupo) | `GET https://{region}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}` |
+| Historial (Mi grupo) | `GET https://{ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids` + `GET .../matches/{id}` |
 
-Todo queda dentro de las dos mismas familias de API (`ACCOUNT-V1` y `LEAGUE-V4`).
+`{region}` es la plataforma elegida (`la1`, `kr`, `euw1`…) y `{ruteo}` su clúster regional
+(`americas`, `europe`, `asia`, `sea`), que el proxy resuelve solo. Tres familias de API en
+total: `ACCOUNT-V1`, `LEAGUE-V4` y `MATCH-V5`.
+
+**Todos los jugadores, con nombres progresivos.** El listado devuelve todas las filas del
+ladder (tope 500). Como cada Riot ID cuesta una llamada a `account-v1` y la clave de
+desarrollo permite 100 peticiones cada 2 minutos, el proxy resuelve los primeros
+`TOP_JUGADORES` nombres al momento y el resto en una cola en segundo plano (lotes de 5 cada
+7 s); mientras tanto la interfaz muestra un marcador y una nota con cuántos faltan, y se van
+completando en cada actualización.
 
 El campo `summonerName` de `league-v4` quedó obsoleto en noviembre de 2023, cuando Riot
 [migró a Riot ID](https://support-developer.riotgames.com/hc/en-us/articles/22698983117587-Summoner-Name-to-Riot-ID):
@@ -111,9 +127,11 @@ Eso significa **una petición extra por jugador**. Como una clave de desarrollo 
 ## API del proxy
 
 ```
-GET /api/ranking?cola=RANKED_SOLO_5x5&tier=CHALLENGER&top=25
-GET /api/jugador?riotId=Nombre%23TAG   # rango de un jugador (sección «Mi grupo»)
-GET /api/estado        # diagnóstico: si hay clave, qué hay en caché, TTL
+GET /api/ranking?region=la1&cola=RANKED_SOLO_5x5&tier=CHALLENGER
+GET /api/ranking?region=kr&cola=RANKED_SOLO_5x5&tier=GOLD&division=II
+GET /api/jugador?riotId=Nombre%23TAG&region=la1    # rango de un jugador (Mi grupo)
+GET /api/historial?puuid=...&region=la1            # últimas partidas (Mi grupo)
+GET /api/estado        # diagnóstico: clave, regiones, cachés, cola de nombres
 ```
 
 `/api/jugador` responde `{ fuente, riotId, puuid, actualizado, colas: { RANKED_SOLO_5x5,
@@ -170,7 +188,8 @@ ranking-lan/
 ├── js/
 │   ├── app.js                 Estado, eventos, pestañas, orquestación
 │   ├── api.js                 Capa de datos: proxy → caché → demo
-│   ├── amigos.js              Sección «Mi grupo»: altas por Riot ID, orden por rango, compartir
+│   ├── amigos.js              Sección «Mi grupo»: altas, orden, historial, consejos, compartir
+│   ├── i18n.js                Diccionarios ES/EN, t(), cambio de idioma en vivo
 │   ├── ui.js                  Renderizado (todo con textContent)
 │   └── registro-sw.js         Registro del SW, aviso de versión, instalación
 ├── datos/ranking-lan.json     Semilla de demostración (ficticia)
@@ -320,9 +339,15 @@ Verificado a septiembre de 2026:
 - La clave de desarrollo caduca cada 24 horas y su cupo es bajo; por eso `TOP_JUGADORES` = 25.
   Para listados más largos hace falta una *Personal* o *Production API Key*.
 - Riot no publica un endpoint de "top N global": hay que pedir la liga completa y ordenarla por
-  LP, que es lo que hace el proxy.
-- Solo se muestran las tres ligas de la élite (Retador, Gran Maestro, Maestro). Debajo de
-  Maestro habría que paginar `league-exp-v4`, con muchas más peticiones.
+  LP, que es lo que hace el proxy (con tope de 500 filas por respuesta; Maestro en KR trae miles).
+- Bajo Maestro se muestra la página 1 de `league-v4 entries` (~200 jugadores por división);
+  paginar más allá multiplicaría las peticiones sin cambiar la demo.
+- Los nombres del listado se completan de forma progresiva por el límite de la clave de
+  desarrollo (ver arriba); los primeros del ladder llegan siempre resueltos. La cola en
+  segundo plano gasta como máximo ~40 % del presupuesto (5 nombres cada 15 s) y un 429
+  con `Retry-After` corto se reintenta una vez en silencio antes de degradar a demo.
+- La semilla offline solo cubre la élite de LAN: otras regiones y ligas menores requieren red
+  la primera vez (después quedan en la caché del service worker).
 - Sin `RIOT_API_KEY` los datos son ficticios. Está señalizado en la interfaz, en el JSON
   (`"fuente": "demo"`) y en los propios Riot ID.
 - La lista de Mi grupo es local a cada dispositivo (por diseño: sin cuentas ni servidor de

@@ -126,7 +126,33 @@ body {
 .cabecera__sub { font-size: 0.75rem; color: var(--gris); }
 .cabecera__sub code { font-family: var(--mono); font-size: 0.72rem; color: var(--cian); }
 
-.cabecera__acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+.cabecera__acciones { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Selector de idioma: compacto, junto a las acciones. */
+.selector-idioma select {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 8px 10px;
+  color: var(--oro-claro);
+  background: var(--azul-700);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-sm);
+  cursor: pointer;
+}
+
+/* Nota de nombres pendientes de resolver (limite de la API). */
+.nota-nombres {
+  margin-bottom: 10px;
+  font-size: 0.74rem;
+  color: var(--cian);
+  background: rgba(3, 151, 171, 0.08);
+  border: 1px dashed rgba(3, 151, 171, 0.4);
+  border-radius: var(--radio-sm);
+  padding: 8px 10px;
+}
+
+.jugador__nombre--pendiente { color: var(--gris-tenue); font-style: italic; font-weight: 400; }
 
 /* ==========================================================================
    BOTONES
@@ -536,7 +562,15 @@ body {
    DIALOGO DE DETALLE
    ========================================================================== */
 .dialogo {
-  width: min(440px, calc(100vw - 32px));
+  /* Centrado explicito en ambos ejes y scroll interno si crece
+     (con historial y consejos la ficha puede ser alta). */
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(500px, calc(100vw - 32px));
+  max-height: min(88dvh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 20px;
   color: var(--oro-claro);
   background: linear-gradient(180deg, var(--azul-600), var(--azul-800));
@@ -581,6 +615,64 @@ body {
   background: rgba(239, 107, 107, 0.35);
 }
 .barra > span { display: block; height: 100%; background: var(--verde); }
+
+/* Secciones extra del dialogo: historial, comparacion y consejos ---------- */
+.dialogo__extra { display: grid; gap: 14px; }
+.dialogo__extra:not(:empty) { margin-top: 16px; }
+
+.dialogo__seccion { border-top: 1px solid var(--borde); padding-top: 12px; }
+.dialogo__subtitulo {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--gris);
+  margin-bottom: 10px;
+}
+.dialogo__cargando { color: var(--gris); font-size: 0.82rem; padding: 10px 0; }
+
+.historial { list-style: none; display: grid; gap: 6px; }
+.historial__partida {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radio-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 3px solid var(--gris-tenue);
+  font-size: 0.8rem;
+}
+.historial__partida--v { border-left-color: var(--verde); }
+.historial__partida--d { border-left-color: var(--rojo); }
+.historial__resultado { font-weight: 700; width: 1.2em; flex: none; }
+.historial__partida--v .historial__resultado { color: var(--verde); }
+.historial__partida--d .historial__resultado { color: var(--rojo); }
+.historial__campeon { font-weight: 700; min-width: 5.5em; }
+.historial__kda { font-variant-numeric: tabular-nums; }
+.historial__meta { color: var(--gris); font-size: 0.72rem; flex: 1; }
+.historial__cuando { color: var(--gris-tenue); font-size: 0.68rem; white-space: nowrap; }
+.historial__vacio { color: var(--gris); font-size: 0.82rem; }
+
+.comparacion {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 14px;
+  font-size: 0.84rem;
+}
+.comparacion dt { color: var(--gris); }
+.comparacion dd { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.comparacion__bien { color: var(--verde); }
+.comparacion__mal { color: var(--rojo); }
+
+.consejos { list-style: none; display: grid; gap: 8px; }
+.consejos__item {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--oro-claro);
+  padding: 8px 10px 8px 14px;
+  background: rgba(200, 170, 110, 0.08);
+  border-left: 3px solid var(--oro);
+  border-radius: var(--radio-sm);
+}
 
 /* ==========================================================================
    TOAST DE ACTUALIZACION
@@ -666,8 +758,41 @@ body {
 .grupo-intro { font-size: 0.84rem; color: var(--gris); line-height: 1.6; margin-bottom: 14px; }
 .grupo-intro code { font-family: var(--mono); font-size: 0.78rem; color: var(--cian); }
 
-.grupo-formulario { display: flex; gap: 10px; flex-wrap: wrap; }
-.grupo-formulario input { flex: 1; min-width: 210px; }
+/* Nombre y tag por separado, con el # dibujado entre ambos. */
+.grupo-formulario {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.campo-riot { display: grid; gap: 5px; }
+.campo-riot label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--gris);
+  font-weight: 700;
+}
+.campo-riot--nombre { flex: 1; min-width: 170px; }
+.campo-riot--tag { width: 110px; }
+.campo-riot__numeral {
+  align-self: flex-end;
+  padding-bottom: 10px;
+  color: var(--oro);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.grupo-formulario input {
+  font: inherit;
+  font-size: 0.88rem;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--oro-claro);
+  background: var(--azul-700);
+  border: 1px solid var(--borde);
+  border-radius: var(--radio-sm);
+}
+.grupo-formulario input::placeholder { color: var(--gris-tenue); }
 
 .grupo-mensaje { margin-top: 10px; font-size: 0.8rem; min-height: 1.3em; color: var(--gris); }
 .grupo-mensaje[data-tipo="error"] { color: var(--rojo); }

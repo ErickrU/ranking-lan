@@ -12,6 +12,8 @@
  * un backend propio. Ver servidor/proxy.mjs y README.md.
  */
 
+import { localeActual } from './i18n.js';
+
 export const CACHE_DATOS = 'ranking-lan-datos-v1';
 export const RUTA_PROXY = './api/ranking';
 export const RUTA_DEMO = './datos/ranking-lan.json';
@@ -23,6 +25,16 @@ export const COLAS = {
   RANKED_SOLO_5x5: 'Solo / Dúo',
   RANKED_FLEX_SR: 'Flexible',
 };
+
+/** Plataformas que acepta el proxy (las etiquetas visibles viven en i18n). */
+export const REGIONES = [
+  'la1', 'la2', 'na1', 'br1',
+  'euw1', 'eun1', 'tr1', 'ru', 'me1',
+  'kr', 'jp1', 'oc1', 'sg2', 'tw2', 'vn2',
+];
+
+/** Ligas de la elite: sin divisiones (I fija). */
+export const TIERS_APEX = new Set(['CHALLENGER', 'GRANDMASTER', 'MASTER']);
 
 /** Nombres en español de todas las ligas (la vista global solo usa la élite). */
 export const TIERS = {
@@ -84,8 +96,10 @@ function normalizarJugador(bruto, indice) {
 
   return {
     puesto: Number(bruto.puesto ?? indice + 1),
-    riotId: bruto.riotId || (tag ? `${nombre}#${tag}` : nombre) || 'Desconocido',
-    nombre: nombre || bruto.riotId?.split('#')[0] || 'Desconocido',
+    // riotId/nombre null = el proxy aun no resuelve este nombre (rate limit);
+    // la interfaz muestra un marcador y el dato llega en la proxima recarga.
+    riotId: bruto.riotId || (nombre ? (tag ? `${nombre}#${tag}` : nombre) : null),
+    nombre: nombre || (bruto.riotId ? bruto.riotId.split('#')[0] : null),
     tag,
     puuid: bruto.puuid ?? null,
     tier: bruto.tier ?? '',
@@ -104,17 +118,17 @@ function normalizarJugador(bruto, indice) {
 }
 
 /** Normaliza el documento completo devuelto por el proxy. */
-function normalizarListado(documento, { cola, tier, fuente }) {
+function normalizarListado(documento, { region, cola, tier, division, fuente }) {
   const jugadores = (documento.jugadores ?? []).map(normalizarJugador);
   return {
     fuente: fuente ?? documento.fuente ?? FUENTE.VIVO,
     aviso: documento.aviso ?? null,
-    region: documento.region ?? 'LAN',
-    regionNombre: documento.regionNombre ?? 'Latinoamérica Norte',
-    plataforma: documento.plataforma ?? 'la1',
+    region: (documento.plataforma ?? region ?? 'la1').toLowerCase(),
     cola: documento.cola ?? cola,
     tier: documento.tier ?? tier,
+    division: documento.division ?? division ?? 'I',
     actualizado: documento.actualizado ?? null,
+    nombresPendientes: Number(documento.nombresPendientes ?? 0),
     jugadores,
     total: jugadores.length,
   };
@@ -124,14 +138,14 @@ function normalizarListado(documento, { cola, tier, fuente }) {
  * Pasos de la estrategia
  * ------------------------------------------------------------------ */
 
-function urlProxy(cola, tier) {
-  const parametros = new URLSearchParams({ cola, tier });
+function urlProxy({ region, cola, tier, division }) {
+  const parametros = new URLSearchParams({ region, cola, tier, division });
   return `${RUTA_PROXY}?${parametros}`;
 }
 
 /** Paso 1: el proxy. Lanza excepcion si no responde o responde mal. */
-async function desdeProxy(cola, tier) {
-  const url = urlProxy(cola, tier);
+async function desdeProxy({ region, cola, tier, division }) {
+  const url = urlProxy({ region, cola, tier, division });
   const respuesta = await fetchConLimite(url);
 
   if (!respuesta.ok) {
@@ -160,25 +174,29 @@ async function desdeProxy(cola, tier) {
   let fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.VIVO;
   if (servidaDeCache && fuente !== FUENTE.DEMO) fuente = FUENTE.CACHE;
 
-  return normalizarListado(documento, { cola, tier, fuente });
+  return normalizarListado(documento, { region, cola, tier, division, fuente });
 }
 
 /** Paso 2: la ultima respuesta buena guardada en Cache Storage. */
-async function desdeCache(cola, tier) {
+async function desdeCache({ region, cola, tier, division }) {
   const cache = await abrirCache();
   if (!cache) return null;
 
-  const respuesta = await cache.match(urlProxy(cola, tier));
+  const respuesta = await cache.match(urlProxy({ region, cola, tier, division }));
   if (!respuesta) return null;
 
   const documento = await respuesta.json();
   // Si lo guardado era la semilla demo, sigue siendo demo.
   const fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.CACHE;
-  return normalizarListado(documento, { cola, tier, fuente });
+  return normalizarListado(documento, { region, cola, tier, division, fuente });
 }
 
-/** Paso 3: la semilla de demostracion incluida en el paquete. */
-async function desdeDemo(cola, tier) {
+/**
+ * Paso 3: la semilla de demostracion incluida en el paquete. Solo cubre la
+ * elite (Retador/GM/Maestro); para ligas menores sin red ni cache devuelve
+ * un listado vacio y la interfaz lo explica.
+ */
+async function desdeDemo({ region, cola, tier, division }) {
   const respuesta = await fetch(RUTA_DEMO, { headers: { Accept: 'application/json' } });
   if (!respuesta.ok) throw new Error('No se pudo leer los datos de demostración');
 
@@ -186,8 +204,8 @@ async function desdeDemo(cola, tier) {
   const jugadores = documento.listados?.[`${cola}|${tier}`] ?? [];
 
   return normalizarListado(
-    { ...documento, cola, tier, jugadores },
-    { cola, tier, fuente: FUENTE.DEMO },
+    { ...documento, plataforma: region, cola, tier, division, jugadores },
+    { region, cola, tier, division, fuente: FUENTE.DEMO },
   );
 }
 
@@ -196,28 +214,30 @@ async function desdeDemo(cola, tier) {
  * ------------------------------------------------------------------ */
 
 /**
- * Devuelve el listado de un tier y una cola de la region LAN.
+ * Devuelve un listado del ladder.
  *
  * @param {object} opciones
- * @param {string} opciones.cola  RANKED_SOLO_5x5 | RANKED_FLEX_SR
- * @param {string} opciones.tier  CHALLENGER | GRANDMASTER | MASTER
- * @param {boolean} [opciones.omitirRed] Si es true va directo a cache/demo
- *        (util cuando el navegador ya se declara sin conexion).
+ * @param {string} opciones.region   la1 | la2 | na1 | ... (ver REGIONES)
+ * @param {string} opciones.cola     RANKED_SOLO_5x5 | RANKED_FLEX_SR
+ * @param {string} opciones.tier     CHALLENGER ... IRON
+ * @param {string} [opciones.division] I-IV (solo ligas bajo Maestro)
+ * @param {boolean} [opciones.omitirRed] true = directo a cache/demo (sin red).
  * @returns {Promise<object>} listado normalizado, siempre con `fuente` y `jugadores`
  */
-export async function obtenerRanking({ cola, tier, omitirRed = false }) {
+export async function obtenerRanking({ region = 'la1', cola, tier, division = 'I', omitirRed = false }) {
+  const consulta = { region, cola, tier, division };
   const problemas = [];
 
   if (!omitirRed) {
     try {
-      return await desdeProxy(cola, tier);
+      return await desdeProxy(consulta);
     } catch (error) {
       problemas.push(error.message);
     }
   }
 
   try {
-    const enCache = await desdeCache(cola, tier);
+    const enCache = await desdeCache(consulta);
     if (enCache && enCache.jugadores.length > 0) {
       return { ...enCache, problemas };
     }
@@ -225,7 +245,7 @@ export async function obtenerRanking({ cola, tier, omitirRed = false }) {
     problemas.push(error.message);
   }
 
-  const demo = await desdeDemo(cola, tier);
+  const demo = await desdeDemo(consulta);
   return { ...demo, problemas };
 }
 
@@ -279,16 +299,17 @@ function normalizarPerfil(documento, fuente) {
   };
 }
 
-const urlJugador = (riotId) => `./api/jugador?riotId=${encodeURIComponent(riotId)}`;
+const urlJugador = (riotId, region) =>
+  `./api/jugador?${new URLSearchParams({ riotId, region })}`;
 
 /**
- * Rango de un jugador por su Riot ID (Nombre#TAG), con la misma estrategia
- * proxy -> cache que obtenerRanking. Un 404 (la cuenta no existe) o un 400
- * (formato invalido) se relanzan SIEMPRE como ErrorDatos: son informacion
- * real que no debe taparse con la cache.
+ * Rango de un jugador por su Riot ID (Nombre#TAG) en una region, con la misma
+ * estrategia proxy -> cache que obtenerRanking. Un 404 (la cuenta no existe)
+ * o un 400 (formato invalido) se relanzan SIEMPRE como ErrorDatos: son
+ * informacion real que no debe taparse con la cache.
  */
-export async function obtenerJugador({ riotId, omitirRed = false }) {
-  const url = urlJugador(riotId);
+export async function obtenerJugador({ riotId, region = 'la1', omitirRed = false }) {
+  const url = urlJugador(riotId, region);
   const problemas = [];
 
   if (!omitirRed) {
@@ -331,6 +352,56 @@ export async function obtenerJugador({ riotId, omitirRed = false }) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Historial de partidas (seccion "Mi grupo")
+ * ------------------------------------------------------------------ */
+
+/**
+ * Ultimas partidas clasificatorias de un jugador (match-v5 via el proxy).
+ * En demo el proxy genera un historial ficticio estable; se usa riotId como
+ * semilla cuando no hay puuid. Misma estrategia red -> cache.
+ */
+export async function obtenerHistorial({ puuid, riotId, region = 'la1', omitirRed = false }) {
+  const parametros = new URLSearchParams({ region });
+  if (puuid) parametros.set('puuid', puuid);
+  else if (riotId) parametros.set('riotId', riotId);
+  const url = `./api/historial?${parametros}`;
+
+  const problemas = [];
+
+  if (!omitirRed) {
+    try {
+      const respuesta = await fetchConLimite(url);
+      if (!respuesta.ok) throw new ErrorDatos(`El proxy respondió ${respuesta.status}`, respuesta.status);
+
+      const servidaDeCache = respuesta.headers.get('X-Ranking-Origen') === 'cache';
+      if (!servidaDeCache) {
+        const cache = await abrirCache();
+        if (cache) {
+          try { await cache.put(url, respuesta.clone()); } catch { /* sin espacio */ }
+        }
+      }
+
+      const documento = await respuesta.json();
+      let fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.VIVO;
+      if (servidaDeCache && fuente !== FUENTE.DEMO) fuente = FUENTE.CACHE;
+      return { fuente, partidas: documento.partidas ?? [] };
+    } catch (error) {
+      problemas.push(error.message);
+    }
+  }
+
+  const cache = await abrirCache();
+  const guardada = cache && (await cache.match(url));
+  if (guardada) {
+    const documento = await guardada.json();
+    const fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.CACHE;
+    return { fuente, partidas: documento.partidas ?? [] };
+  }
+
+  throw new ErrorDatos(problemas[0] ?? 'Sin conexión y sin historial guardado');
+}
+
+/* ------------------------------------------------------------------ *
  * Orden de rangos
  * ------------------------------------------------------------------ */
 
@@ -357,10 +428,24 @@ export function puntuacionRango(entrada) {
  * Formateo (es-MX, con degradacion si Intl no trae los datos)
  * ------------------------------------------------------------------ */
 
-const formatoNumero = new Intl.NumberFormat('es-MX');
-export const numero = (n) => formatoNumero.format(n ?? 0);
+// Los formateadores siguen al idioma activo; se crean una vez por locale.
+const cacheFormatos = new Map();
 
-const formatoRelativo = new Intl.RelativeTimeFormat('es', { numeric: 'auto' });
+function formatos() {
+  const locale = localeActual();
+  let f = cacheFormatos.get(locale);
+  if (!f) {
+    f = {
+      numero: new Intl.NumberFormat(locale),
+      relativo: new Intl.RelativeTimeFormat(locale.split('-')[0], { numeric: 'auto' }),
+    };
+    cacheFormatos.set(locale, f);
+  }
+  return f;
+}
+
+export const numero = (n) => formatos().numero.format(n ?? 0);
+
 const UNIDADES = [
   ['year', 31536000],
   ['month', 2592000],
@@ -370,18 +455,18 @@ const UNIDADES = [
   ['second', 1],
 ];
 
-/** "hace 5 minutos" a partir de una fecha ISO. */
+/** "hace 5 minutos" / "5 minutes ago" a partir de una fecha ISO. */
 export function tiempoRelativo(iso) {
   if (!iso) return '';
   const fecha = new Date(iso);
   if (Number.isNaN(fecha.getTime())) return '';
 
   const segundos = Math.round((fecha.getTime() - Date.now()) / 1000);
-  if (Math.abs(segundos) < 45) return 'hace unos segundos';
+  const ajustados = Math.abs(segundos) < 45 ? (segundos < 0 ? -30 : 30) : segundos;
 
   for (const [unidad, factor] of UNIDADES) {
-    if (Math.abs(segundos) >= factor) {
-      return formatoRelativo.format(Math.round(segundos / factor), unidad);
+    if (Math.abs(ajustados) >= factor) {
+      return formatos().relativo.format(Math.round(ajustados / factor), unidad);
     }
   }
   return '';
@@ -392,5 +477,5 @@ export function fechaCompleta(iso) {
   if (!iso) return '';
   const fecha = new Date(iso);
   if (Number.isNaN(fecha.getTime())) return '';
-  return fecha.toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
+  return fecha.toLocaleString(localeActual(), { dateStyle: 'medium', timeStyle: 'short' });
 }

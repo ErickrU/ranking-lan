@@ -3,10 +3,11 @@
  *
  * Todo el texto que viene de la API se inserta con textContent, nunca con
  * innerHTML: un Riot ID puede contener cualquier caracter y no queremos que el
- * marcado dependa de datos externos.
+ * marcado dependa de datos externos. Todas las cadenas visibles pasan por t().
  */
 
-import { COLAS, TIERS, FUENTE, numero, tiempoRelativo, fechaCompleta } from './api.js';
+import { FUENTE, numero, tiempoRelativo, fechaCompleta } from './api.js';
+import { t } from './i18n.js';
 
 const MEDALLAS = ['🥇', '🥈', '🥉'];
 
@@ -32,13 +33,26 @@ export function claseWinrate(jugador) {
   return 'wr';
 }
 
+/** "Oro II", "Retador" (la elite no muestra division) o "Sin clasificar". */
+const APEX = new Set(['MASTER', 'GRANDMASTER', 'CHALLENGER']);
+export function nombreRango(entrada) {
+  if (!entrada) return t('tier.UNRANKED');
+  const liga = t(`tier.${entrada.tier}`);
+  return APEX.has(entrada.tier) ? liga : `${liga} ${entrada.division}`;
+}
+
+/** Nombre visible de un jugador del listado (o marcador si aun no resuelve). */
+function nombreVisible(jugador) {
+  return jugador.nombre ?? `${t('tabla.invocador')} #${jugador.puesto}`;
+}
+
 /** Insignias derivadas de las banderas que expone league-v4. */
 function insigniasDe(jugador) {
   const lista = [];
-  if (jugador.racha) lista.push(['racha', '🔥 En racha']);
-  if (jugador.veterano) lista.push(['veterano', 'Veterano']);
-  if (jugador.nuevo) lista.push(['nuevo', 'Recién llegado']);
-  if (jugador.inactivo) lista.push(['inactivo', 'Inactivo']);
+  if (jugador.racha) lista.push(['racha', t('insignia.racha')]);
+  if (jugador.veterano) lista.push(['veterano', t('insignia.veterano')]);
+  if (jugador.nuevo) lista.push(['nuevo', t('insignia.nuevo')]);
+  if (jugador.inactivo) lista.push(['inactivo', t('insignia.inactivo')]);
   return lista;
 }
 
@@ -49,36 +63,38 @@ function nodosInsignias(jugador) {
 }
 
 /* ------------------------------------------------------------------ *
- * Tabla
+ * Tabla global
  * ------------------------------------------------------------------ */
 
 /**
- * Pinta las filas del ranking.
- * @param {HTMLElement} cuerpo  el <tbody>
- * @param {Array} jugadores
+ * Pinta las filas del ranking. Cada fila lleva data-puesto para abrir el
+ * detalle (el riotId puede ser null mientras el proxy resuelve nombres).
  */
 export function renderTabla(cuerpo, jugadores) {
   const fragmento = document.createDocumentFragment();
 
   for (const jugador of jugadores) {
     const fila = elemento('tr');
-    fila.dataset.riotId = jugador.riotId;
+    fila.dataset.puesto = String(jugador.puesto);
 
     /* # ---------------------------------------------------------- */
     const celdaPuesto = elemento('td', 'col-puesto');
-    const puesto = elemento('span', jugador.puesto <= 3 ? 'puesto puesto--top' : 'puesto', `${jugador.puesto}`);
-    celdaPuesto.append(puesto);
+    celdaPuesto.append(
+      elemento('span', jugador.puesto <= 3 ? 'puesto puesto--top' : 'puesto', `${jugador.puesto}`),
+    );
 
     /* Jugador --------------------------------------------------- */
     const celdaJugador = elemento('td');
     const envoltorio = elemento('div', 'celda-jugador');
 
-    // Boton real: es el objetivo de teclado que abre el detalle.
     const boton = elemento('button', 'enlace-jugador');
     boton.type = 'button';
     boton.dataset.accion = 'detalle';
-    boton.setAttribute('aria-label', `Ver detalle de ${jugador.riotId}`);
-    boton.append(elemento('span', 'jugador__nombre', jugador.nombre));
+    boton.setAttribute('aria-label', t('detalle.abrirAria', { riotId: jugador.riotId ?? nombreVisible(jugador) }));
+
+    const nombre = elemento('span', 'jugador__nombre', nombreVisible(jugador));
+    if (!jugador.nombre) nombre.classList.add('jugador__nombre--pendiente');
+    boton.append(nombre);
     if (jugador.tag) boton.append(elemento('span', 'jugador__tag', `#${jugador.tag}`));
 
     const linea = elemento('div');
@@ -86,7 +102,6 @@ export function renderTabla(cuerpo, jugadores) {
     for (const insignia of nodosInsignias(jugador).slice(0, 1)) linea.append(insignia);
     envoltorio.append(linea);
 
-    // Solo visible en pantallas angostas, donde V/D y winrate se ocultan.
     envoltorio.append(
       elemento(
         'span',
@@ -140,24 +155,26 @@ export function renderPodio(contenedor, jugadores) {
   for (const jugador of jugadores.slice(0, 3)) {
     const tarjeta = elemento('button', 'podio__tarjeta');
     tarjeta.type = 'button';
-    tarjeta.dataset.riotId = jugador.riotId;
     tarjeta.dataset.puesto = `${jugador.puesto}`;
     tarjeta.dataset.accion = 'detalle';
-    tarjeta.setAttribute('aria-label', `Puesto ${jugador.puesto}: ${jugador.riotId}, ${jugador.lp} LP`);
+    tarjeta.setAttribute('aria-label', t('podio.tarjeta', {
+      puesto: jugador.puesto,
+      riotId: jugador.riotId ?? nombreVisible(jugador),
+      lp: jugador.lp,
+    }));
 
     tarjeta.append(elemento('span', 'podio__medalla', MEDALLAS[jugador.puesto - 1] ?? '🏅'));
 
     const centro = elemento('div');
     const nombre = elemento('div', 'podio__nombre');
-    nombre.append(document.createTextNode(jugador.nombre));
+    nombre.append(document.createTextNode(nombreVisible(jugador)));
     if (jugador.tag) nombre.append(elemento('span', 'podio__tag', ` #${jugador.tag}`));
     centro.append(nombre);
     centro.append(
-      elemento(
-        'div',
-        'podio__detalle',
-        `${numero(jugador.partidas)} partidas · ${textoWinrate(jugador)} de victorias`,
-      ),
+      elemento('div', 'podio__detalle', t('podio.detalle', {
+        partidas: numero(jugador.partidas),
+        wr: textoWinrate(jugador),
+      })),
     );
     tarjeta.append(centro);
 
@@ -194,8 +211,6 @@ export function renderResumen(nodos, jugadores) {
 
   nodos.total.textContent = numero(jugadores.length);
   nodos.lpMax.textContent = numero(Math.max(...lps));
-  // El minimo del listado recibido. No es el corte oficial de la liga, porque el
-  // servidor recorta el ladder al top solicitado.
   nodos.lpMin.textContent = numero(Math.min(...lps));
   nodos.winrate.textContent = winratePromedio === null ? '—' : `${winratePromedio.toFixed(1)} %`;
 }
@@ -204,58 +219,54 @@ export function renderResumen(nodos, jugadores) {
  * Barra de estado
  * ------------------------------------------------------------------ */
 
-const ETIQUETAS_FUENTE = {
-  [FUENTE.VIVO]: 'Datos en vivo',
-  [FUENTE.CACHE]: 'Desde caché',
-  [FUENTE.DEMO]: 'Datos demo',
-};
-
 export function renderEstado(nodos, { listado, enLinea, cargando }) {
   /* Conexion */
   nodos.chipConexion.dataset.estado = enLinea ? 'en-linea' : 'sin-conexion';
-  nodos.chipConexion.querySelector('.chip__texto').textContent = enLinea ? 'En línea' : 'Sin conexión';
+  nodos.chipConexion.querySelector('.chip__texto').textContent =
+    enLinea ? t('conexion.enLinea') : t('conexion.sinConexion');
 
   /* Fuente de los datos */
   if (cargando) {
     nodos.chipFuente.dataset.fuente = 'cargando';
-    nodos.chipFuente.querySelector('.chip__texto').textContent = 'Cargando…';
+    nodos.chipFuente.querySelector('.chip__texto').textContent = t('fuente.cargando');
   } else {
     nodos.chipFuente.dataset.fuente = listado.fuente;
-    nodos.chipFuente.querySelector('.chip__texto').textContent =
-      ETIQUETAS_FUENTE[listado.fuente] ?? listado.fuente;
+    nodos.chipFuente.querySelector('.chip__texto').textContent = t(`fuente.${listado.fuente}`);
   }
 
   /* Marca de tiempo */
   const relativo = tiempoRelativo(listado.actualizado);
-  nodos.tiempo.textContent = relativo ? `Actualizado ${relativo}` : '';
+  nodos.tiempo.textContent = relativo ? t('estado.actualizado', { tiempo: relativo }) : '';
   nodos.tiempo.title = fechaCompleta(listado.actualizado);
 
-  /* Aviso de demostracion */
+  /* Aviso de demostracion (el detalle del motivo llega del servidor) */
   const esDemo = listado.fuente === FUENTE.DEMO;
   nodos.aviso.hidden = !esDemo;
-  if (esDemo) {
-    nodos.avisoTexto.textContent =
-      listado.aviso ??
-      'Los Riot ID mostrados son ficticios. Arranca el proxy con una RIOT_API_KEY para ver el ladder real de LAN.';
-  }
+  if (esDemo && listado.aviso) nodos.avisoTexto.textContent = listado.aviso;
 }
 
 /* ------------------------------------------------------------------ *
  * Titulos y conteos
  * ------------------------------------------------------------------ */
 
-export function renderTitulo(nodo, { cola, tier }) {
-  nodo.textContent = `${TIERS[tier] ?? tier} · ${COLAS[cola] ?? cola}`;
+export function renderTitulo(nodo, { region, cola, tier, division }) {
+  const liga = APEX.has(tier) ? t(`tier.${tier}`) : `${t(`tier.${tier}`)} ${division}`;
+  const regionCorta = t(`region.${region}`).split(' · ')[0];
+  nodo.textContent = `${liga} · ${t(`cola.${cola}`)} · ${regionCorta}`;
 }
 
-export function renderConteo(nodo, { visibles, total, busqueda }) {
+export function renderConteo(nodo, notaNombres, { visibles, total, busqueda, nombresPendientes }) {
   if (busqueda) {
-    nodo.textContent =
-      visibles === 0
-        ? `Sin resultados para "${busqueda}"`
-        : `${numero(visibles)} de ${numero(total)} jugadores coinciden con "${busqueda}"`;
+    nodo.textContent = visibles === 0
+      ? t('conteo.sinResultados', { busqueda })
+      : t('conteo.busqueda', { visibles: numero(visibles), total: numero(total), busqueda });
   } else {
-    nodo.textContent = `${numero(total)} jugadores en el listado`;
+    nodo.textContent = t('conteo.total', { total: numero(total) });
+  }
+
+  notaNombres.hidden = !nombresPendientes;
+  if (nombresPendientes) {
+    notaNombres.textContent = t('tabla.nombresPendientes', { n: numero(nombresPendientes) });
   }
 }
 
@@ -263,24 +274,41 @@ export function renderConteo(nodo, { visibles, total, busqueda }) {
  * Dialogo de detalle
  * ------------------------------------------------------------------ */
 
-export function abrirDetalle(dialogo, nodos, jugador, listado) {
-  nodos.titulo.textContent = jugador.riotId;
-  nodos.sub.textContent =
-    `Puesto ${jugador.puesto} · ${TIERS[jugador.tier] ?? jugador.tier} ${jugador.division} · ` +
-    `${COLAS[listado.cola] ?? listado.cola} · ${listado.regionNombre}`;
+/**
+ * Abre el dialogo con la ficha de un jugador.
+ *
+ * @param contexto { cola, region, totalListado? } — con totalListado se
+ *        calcula el percentil dentro del listado actual.
+ */
+export function abrirDetalle(dialogo, nodos, jugador, contexto) {
+  nodos.titulo.textContent = jugador.riotId ?? nombreVisible(jugador);
+
+  nodos.sub.textContent = [
+    t('dialogo.puesto', { puesto: jugador.puesto }),
+    nombreRango(jugador.tier ? jugador : null),
+    t(`cola.${contexto.cola}`),
+    t(`region.${contexto.region}`),
+  ].join(' · ');
 
   const filas = [
-    ['Puntos de liga (LP)', numero(jugador.lp)],
-    ['Partidas jugadas', numero(jugador.partidas)],
-    ['Victorias', numero(jugador.victorias)],
-    ['Derrotas', numero(jugador.derrotas)],
-    ['Winrate', textoWinrate(jugador)],
+    [t('dialogo.lp'), numero(jugador.lp)],
+    [t('dialogo.partidas'), numero(jugador.partidas)],
+    [t('dialogo.victorias'), numero(jugador.victorias)],
+    [t('dialogo.derrotas'), numero(jugador.derrotas)],
+    [t('dialogo.winrate'), textoWinrate(jugador)],
   ];
 
   const fragmento = document.createDocumentFragment();
   for (const [etiqueta, valor] of filas) {
     fragmento.append(elemento('dt', null, etiqueta));
     fragmento.append(elemento('dd', null, valor));
+  }
+
+  // Percentil dentro del listado actual (solo vista global).
+  if (contexto.totalListado > 1) {
+    const pct = Math.max(0.1, (jugador.puesto / contexto.totalListado) * 100);
+    fragmento.append(elemento('dt', null, '📊'));
+    fragmento.append(elemento('dd', null, t('dialogo.percentil', { pct: pct.toFixed(pct < 10 ? 1 : 0) })));
   }
 
   // Barra visual de winrate.
@@ -290,13 +318,97 @@ export function abrirDetalle(dialogo, nodos, jugador, listado) {
     relleno.style.width = `${jugador.winrate.toFixed(1)}%`;
     barra.append(relleno);
     barra.setAttribute('role', 'img');
-    barra.setAttribute('aria-label', `${textoWinrate(jugador)} de victorias`);
+    barra.setAttribute('aria-label', t('dialogo.barra', { wr: textoWinrate(jugador) }));
     fragmento.append(barra);
   }
 
   nodos.datos.replaceChildren(fragmento);
   nodos.insignias.replaceChildren(...nodosInsignias(jugador));
 
+  // Las secciones extra (historial/consejos del grupo) las llena amigos.js;
+  // aqui se limpian para que la vista global no herede contenido.
+  if (nodos.extra) nodos.extra.replaceChildren();
+
   if (typeof dialogo.showModal === 'function') dialogo.showModal();
   else dialogo.setAttribute('open', '');
+}
+
+/* ------------------------------------------------------------------ *
+ * Historial y consejos (los usa amigos.js dentro del dialogo)
+ * ------------------------------------------------------------------ */
+
+/** Lista de partidas del historial (match-v5) ya normalizadas por el proxy. */
+export function renderHistorial(contenedor, partidas) {
+  const seccion = elemento('section', 'dialogo__seccion');
+  seccion.append(elemento('h4', 'dialogo__subtitulo', t('historial.titulo')));
+
+  if (!partidas || partidas.length === 0) {
+    seccion.append(elemento('p', 'historial__vacio', t('historial.vacio')));
+    contenedor.append(seccion);
+    return;
+  }
+
+  const lista = elemento('ul', 'historial');
+  for (const p of partidas) {
+    const item = elemento('li', `historial__partida historial__partida--${p.victoria ? 'v' : 'd'}`);
+
+    item.append(elemento('span', 'historial__resultado', p.victoria ? t('historial.v') : t('historial.d')));
+    item.append(elemento('span', 'historial__campeon', p.campeon));
+
+    const kda = elemento('span', 'historial__kda');
+    kda.append(elemento('strong', null, `${p.k}/${p.d}/${p.a}`));
+    item.append(kda);
+
+    const extras = [];
+    if (p.cs) extras.push(`${numero(p.cs)} CS`);
+    if (p.duracionSeg) extras.push(t('historial.min', { min: Math.round(p.duracionSeg / 60) }));
+    if (p.posicion && t(`posicion.${p.posicion}`) !== `posicion.${p.posicion}`) {
+      extras.push(t(`posicion.${p.posicion}`));
+    }
+    item.append(elemento('span', 'historial__meta', extras.join(' · ')));
+
+    if (p.terminada) {
+      item.append(elemento('span', 'historial__cuando', tiempoRelativo(p.terminada)));
+    }
+    lista.append(item);
+  }
+  seccion.append(lista);
+  contenedor.append(seccion);
+}
+
+/** Comparacion del jugador contra el promedio de su grupo. */
+export function renderComparacion(contenedor, { difLp, difWr, puesto, total }) {
+  const seccion = elemento('section', 'dialogo__seccion');
+  seccion.append(elemento('h4', 'dialogo__subtitulo', t('comp.titulo')));
+
+  const dl = elemento('dl', 'comparacion');
+  const filas = [
+    [t('comp.lp'), `${difLp >= 0 ? '+' : ''}${numero(Math.round(difLp))} LP`, difLp >= 0],
+    [t('comp.wr'), t('comp.pts', { n: `${difWr >= 0 ? '+' : ''}${difWr.toFixed(1)}` }), difWr >= 0],
+    [t('comp.puesto'), t('comp.de', { puesto, total }), puesto === 1],
+  ];
+  for (const [etiqueta, valor, positivo] of filas) {
+    dl.append(elemento('dt', null, etiqueta));
+    dl.append(elemento('dd', positivo ? 'comparacion__bien' : 'comparacion__mal', valor));
+  }
+  seccion.append(dl);
+  contenedor.append(seccion);
+}
+
+/** Consejos generados en cliente a partir de datos reales del jugador/grupo. */
+export function renderConsejos(contenedor, consejos) {
+  if (!consejos || consejos.length === 0) return;
+  const seccion = elemento('section', 'dialogo__seccion');
+  seccion.append(elemento('h4', 'dialogo__subtitulo', t('consejos.titulo')));
+
+  const lista = elemento('ul', 'consejos');
+  for (const consejo of consejos) lista.append(elemento('li', 'consejos__item', consejo));
+  seccion.append(lista);
+  contenedor.append(seccion);
+}
+
+/** Mensaje de carga/estado ANEXADO a la zona extra del dialogo (no la vacia:
+    la comparacion contra el grupo ya puede estar pintada encima). */
+export function renderExtraMensaje(contenedor, texto) {
+  contenedor.append(elemento('p', 'dialogo__cargando', texto));
 }

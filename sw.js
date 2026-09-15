@@ -13,7 +13,7 @@
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
 const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS]);
@@ -30,6 +30,7 @@ const PRECACHE = [
   './js/ui.js',
   './js/registro-sw.js',
   './js/amigos.js',
+  './js/i18n.js',
   './datos/ranking-lan.json',
   './iconos/favicon.svg',
   './iconos/icono-192.png',

@@ -218,6 +218,83 @@ try {
   })()`);
   comprobar('Cambiar de liga recarga el listado', cambioTier.includes('Gran Maestro'), cambioTier);
 
+  const todas = await cdp.evaluar(
+    `document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length`);
+  comprobar('El listado muestra a todos los jugadores (sin tope de 25)', todas >= 40, `${todas} filas`);
+
+  const cambioRegion = await cdp.evaluar(`(async () => {
+    const sel = document.getElementById('sel-region');
+    sel.value = 'na1';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      const t = document.getElementById('titulo-tabla').textContent;
+      if (t.includes('NA') && document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length) return t;
+    }
+    return document.getElementById('titulo-tabla').textContent;
+  })()`);
+  comprobar('Cambiar de región recarga el listado', cambioRegion.includes('NA'), cambioRegion);
+
+  const ligaMenor = await cdp.evaluar(`(async () => {
+    const sel = document.getElementById('sel-tier');
+    sel.value = 'GOLD';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      if (!document.getElementById('control-division').hidden
+          && document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length > 0
+          && document.getElementById('titulo-tabla').textContent.includes('Oro')) break;
+    }
+    return {
+      division: !document.getElementById('control-division').hidden,
+      filas: document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length,
+      titulo: document.getElementById('titulo-tabla').textContent,
+    };
+  })()`);
+  comprobar('Las ligas bajo Maestro cargan con selector de división',
+    ligaMenor.division && ligaMenor.filas > 0, `${ligaMenor.titulo} · ${ligaMenor.filas} filas`);
+
+  // Vuelta al estado base (LAN + Retador) para el resto de comprobaciones.
+  await cdp.evaluar(`(async () => {
+    const region = document.getElementById('sel-region');
+    region.value = 'la1';
+    region.dispatchEvent(new Event('change', { bubbles: true }));
+    const tier = document.getElementById('sel-tier');
+    tier.value = 'CHALLENGER';
+    tier.dispatchEvent(new Event('change', { bubbles: true }));
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      if (document.getElementById('titulo-tabla').textContent.includes('Retador')
+          && document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length) break;
+    }
+  })()`);
+
+  /* --- Idiomas ---------------------------------------------------------- */
+  console.log('\nIdiomas');
+  const ingles = await cdp.evaluar(`(async () => {
+    const sel = document.getElementById('sel-idioma');
+    sel.value = 'en';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 350));
+    return {
+      tab: document.querySelector('#tab-global [data-i18n]').textContent,
+      th: document.querySelector('.tabla th.col-wr').textContent,
+      titulo: document.getElementById('titulo-tabla').textContent,
+    };
+  })()`);
+  comprobar('La interfaz cambia a inglés sin recargar',
+    ingles.tab === 'Regional ranking' && ingles.th === 'Win rate',
+    `${ingles.tab} · ${ingles.titulo}`);
+
+  const espanol = await cdp.evaluar(`(async () => {
+    const sel = document.getElementById('sel-idioma');
+    sel.value = 'es';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 350));
+    return document.querySelector('#tab-global [data-i18n]').textContent;
+  })()`);
+  comprobar('Y vuelve a español', espanol === 'Ranking regional', espanol);
+
   const detalle = await cdp.evaluar(`(async () => {
     document.querySelector('#cuerpo-tabla button[data-accion="detalle"]').click();
     await new Promise(r => setTimeout(r, 200));
@@ -242,9 +319,9 @@ try {
   comprobar('El estado vacío se muestra sin integrantes',
     await cdp.evaluar(`getComputedStyle(document.getElementById('grupo-vacio')).display !== 'none'`));
 
-  const agregarAmigo = (riotId, esperadas) => cdp.evaluar(`(async () => {
-    const campo = document.getElementById('campo-riot-id');
-    campo.value = ${JSON.stringify(riotId)};
+  const agregarAmigo = (nombre, tag, esperadas) => cdp.evaluar(`(async () => {
+    document.getElementById('campo-nombre').value = ${JSON.stringify(nombre)};
+    document.getElementById('campo-tag').value = ${JSON.stringify(tag)};
     document.getElementById('form-amigo').dispatchEvent(
       new Event('submit', { bubbles: true, cancelable: true }));
     for (let i = 0; i < 60; i++) {
@@ -258,14 +335,14 @@ try {
     };
   })()`);
 
-  const alta1 = await agregarAmigo('PruebaUno#LAN', 1);
-  comprobar('Se puede agregar un amigo por Riot ID', alta1.filas === 1, alta1.mensaje);
+  const alta1 = await agregarAmigo('PruebaUno', 'LAN', 1);
+  comprobar('Se puede agregar un amigo con nombre y tag separados', alta1.filas === 1, alta1.mensaje);
 
   const ligaAmigo = await cdp.evaluar(
     `document.querySelector('#grupo-cuerpo .rango')?.textContent ?? ''`);
   comprobar('Cada fila muestra su liga', ligaAmigo.length > 0, ligaAmigo);
 
-  const alta2 = await agregarAmigo('OtroAmigo#MX1', 2);
+  const alta2 = await agregarAmigo('OtroAmigo', 'MX1', 2);
   comprobar('Se puede agregar un segundo amigo', alta2.filas === 2, alta2.mensaje);
 
   const puntosGrupo = await cdp.evaluar(
@@ -273,24 +350,43 @@ try {
   comprobar('El grupo queda ordenado por rango descendente',
     puntosGrupo.every((v, i) => i === 0 || v <= puntosGrupo[i - 1]), puntosGrupo.join(' ≥ '));
 
-  const duplicado = await agregarAmigo('pruebauno#lan', 2);
+  const duplicado = await agregarAmigo('pruebauno', 'lan', 2);
   comprobar('Rechaza Riot ID duplicados (sin distinguir mayúsculas)',
     duplicado.filas === 2 && /ya está/i.test(duplicado.mensaje), duplicado.mensaje);
 
-  const invalido = await agregarAmigo('SinNumeral', 2);
-  comprobar('Rechaza formatos que no son Nombre#TAG',
-    invalido.filas === 2 && /formato/i.test(invalido.mensaje), invalido.mensaje);
+  const invalido = await agregarAmigo('Nombre', 'X', 2);
+  comprobar('Valida el tag por separado',
+    invalido.filas === 2 && /tag/i.test(invalido.mensaje), invalido.mensaje);
 
   const detalleGrupo = await cdp.evaluar(`(async () => {
     document.querySelector('#grupo-cuerpo tr').click();
-    await new Promise(r => setTimeout(r, 200));
+    // El historial llega asincrono (match-v5 via proxy): esperamos a que pinte.
+    for (let i = 0; i < 50; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      if (document.querySelectorAll('#dialogo-extra .historial__partida').length > 0) break;
+    }
     const d = document.getElementById('dialogo');
-    const resultado = { abierto: d.open, titulo: document.getElementById('dialogo-titulo').textContent };
+    const resultado = {
+      abierto: d.open,
+      titulo: document.getElementById('dialogo-titulo').textContent,
+      partidas: document.querySelectorAll('#dialogo-extra .historial__partida').length,
+      consejos: document.querySelectorAll('#dialogo-extra .consejos__item').length,
+      comparacion: document.querySelectorAll('#dialogo-extra .comparacion dt').length,
+      centrado: (() => {
+        const caja = d.getBoundingClientRect();
+        return Math.abs((innerWidth - caja.width) / 2 - caja.left) < 40;
+      })(),
+    };
     d.close();
     return resultado;
   })()`);
-  comprobar('El detalle también abre desde el grupo',
-    detalleGrupo.abierto && detalleGrupo.titulo.includes('#'), detalleGrupo.titulo);
+  comprobar('El detalle del grupo abre centrado y con historial de partidas',
+    detalleGrupo.abierto && detalleGrupo.titulo.includes('#') &&
+    detalleGrupo.partidas >= 3 && detalleGrupo.centrado,
+    `${detalleGrupo.titulo} · ${detalleGrupo.partidas} partidas`);
+  comprobar('Incluye consejos y comparación contra el grupo',
+    detalleGrupo.consejos >= 1 && detalleGrupo.comparacion >= 2,
+    `${detalleGrupo.consejos} consejos · ${detalleGrupo.comparacion} métricas comparadas`);
 
   /* Persistencia real: recarga completa de la pagina. */
   await cdp.enviar('Page.navigate', { url: URL_APP + '?vista=grupo' });
@@ -382,7 +478,7 @@ try {
   })()`);
   comprobar('El service worker se registra y activa', sw.registrado && sw.activo, sw.alcance);
   comprobar('Precachea el app shell', sw.precacheados >= 10, `${sw.precacheados} recursos`);
-  for (const esperado of ['/index.html', '/offline.html', '/css/estilos.css', '/js/app.js', '/js/amigos.js', '/datos/ranking-lan.json']) {
+  for (const esperado of ['/index.html', '/offline.html', '/css/estilos.css', '/js/app.js', '/js/amigos.js', '/js/i18n.js', '/datos/ranking-lan.json']) {
     comprobar(`  precacheado ${esperado}`, sw.rutas.some((r) => r.endsWith(esperado)));
   }
   // Chrome solo dispara beforeinstallprompt si se cumplen TODOS los criterios de

@@ -71,9 +71,9 @@ const puuidFalso = () =>
  * Challenger > Grandmaster > Master.
  * ------------------------------------------------------------------ */
 const TIERS = {
-  CHALLENGER:  { cantidad: 40, lpMax: 2050, lpMin: 1180 },
-  GRANDMASTER: { cantidad: 30, lpMin: 820,  lpMax: 1175 },
-  MASTER:      { cantidad: 30, lpMin: 340,  lpMax: 815  },
+  CHALLENGER:  { cantidad: 60, lpMax: 2050, lpMin: 1180 },
+  GRANDMASTER: { cantidad: 50, lpMin: 820,  lpMax: 1175 },
+  MASTER:      { cantidad: 70, lpMin: 340,  lpMax: 815  },
 };
 const COLAS = ['RANKED_SOLO_5x5', 'RANKED_FLEX_SR'];
 

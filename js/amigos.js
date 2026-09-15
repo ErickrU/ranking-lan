@@ -1,33 +1,41 @@
 /**
  * Seccion "Mi grupo": una clasificacion privada entre amigos, aparte del
- * ladder global de LAN.
+ * ladder regional.
  *
- * - Los Riot ID se guardan SOLO en este dispositivo (localStorage); no hay
- *   cuentas ni base de datos.
- * - Cada rango llega del proxy (/api/jugador) y queda en Cache Storage, asi
- *   que el grupo tambien se puede consultar sin conexion.
- * - "Compartir grupo" genera un enlace ?vista=grupo&amigos=... que, al
- *   abrirse, importa los miembros en el dispositivo de quien lo recibe.
+ * - Los Riot ID se guardan SOLO en este dispositivo (localStorage).
+ * - Los rangos se consultan en la REGION activa del selector global.
+ * - Al abrir el detalle de un integrante se suma su mini historial de
+ *   partidas (match-v5 via el proxy), la comparacion contra el promedio del
+ *   grupo y consejos generados a partir de esos numeros reales.
  */
 
 import {
   obtenerJugador,
+  obtenerHistorial,
   ErrorDatos,
   COLAS,
-  TIERS,
+  REGIONES,
   FUENTE,
   puntuacionRango,
   numero,
   tiempoRelativo,
 } from './api.js';
-import { abrirDetalle, textoWinrate, claseWinrate } from './ui.js';
+import { t } from './i18n.js';
+import {
+  abrirDetalle,
+  textoWinrate,
+  claseWinrate,
+  nombreRango,
+  renderHistorial,
+  renderComparacion,
+  renderConsejos,
+  renderExtraMensaje,
+} from './ui.js';
 
 const CLAVE_GRUPO = 'ranking-lan:grupo';
 
 /** Cada integrante cuesta 2 llamadas a Riot: el limite protege la cuota. */
 const MAX_MIEMBROS = 20;
-
-const TIERS_ALTOS = new Set(['MASTER', 'GRANDMASTER', 'CHALLENGER']);
 
 /* ------------------------------------------------------------------ *
  * DOM
@@ -36,7 +44,8 @@ const $ = (selector) => document.querySelector(selector);
 
 const nodos = {
   formulario: $('#form-amigo'),
-  campo: $('#campo-riot-id'),
+  campoNombre: $('#campo-nombre'),
+  campoTag: $('#campo-tag'),
   botonAgregar: $('#btn-agregar'),
   mensaje: $('#grupo-mensaje'),
 
@@ -50,12 +59,15 @@ const nodos = {
   cuerpo: $('#grupo-cuerpo'),
   vacio: $('#grupo-vacio'),
 
+  selRegionGlobal: $('#sel-region'),
+
   dialogo: $('#dialogo'),
   dialogoNodos: {
     titulo: $('#dialogo-titulo'),
     sub: $('#dialogo-sub'),
     datos: $('#dialogo-datos'),
     insignias: $('#dialogo-insignias'),
+    extra: $('#dialogo-extra'),
   },
 };
 
@@ -68,6 +80,12 @@ const estado = {
   datos: new Map(),   // riotId en minusculas -> perfil normalizado | { error }
   cargando: false,
   ultimaCarga: null,
+};
+
+/** Region activa: la del selector global (los rangos dependen de ella). */
+const regionActual = () => {
+  const valor = nodos.selRegionGlobal?.value;
+  return REGIONES.includes(valor) ? valor : 'la1';
 };
 
 function leer() {
@@ -95,15 +113,20 @@ function guardar() {
  * Riot ID
  * ------------------------------------------------------------------ */
 
-/** "nombre#tag" -> Riot ID normalizado (tag en mayusculas) o null. */
-function validarRiotId(texto) {
+const NOMBRE_VALIDO = (nombre) => nombre.length >= 1 && nombre.length <= 16 && !nombre.includes('#');
+const TAG_VALIDO = (tag) => /^[\p{L}\p{N}]{2,5}$/u.test(tag);
+
+/** Une nombre y tag ya validados en un Riot ID normalizado. */
+const unirRiotId = (nombre, tag) => `${nombre}#${tag.toUpperCase()}`;
+
+/** "nombre#tag" (enlaces compartidos) -> Riot ID normalizado o null. */
+function validarRiotIdTexto(texto) {
   const pos = texto.lastIndexOf('#');
   if (pos <= 0) return null;
   const nombre = texto.slice(0, pos).trim();
   const tag = texto.slice(pos + 1).trim();
-  if (nombre.length < 1 || nombre.length > 16 || nombre.includes('#')) return null;
-  if (!/^[\p{L}\p{N}]{2,5}$/u.test(tag)) return null;
-  return `${nombre}#${tag.toUpperCase()}`;
+  if (!NOMBRE_VALIDO(nombre) || !TAG_VALIDO(tag)) return null;
+  return unirRiotId(nombre, tag);
 }
 
 const claveDe = (riotId) => riotId.toLowerCase();
@@ -133,31 +156,45 @@ function avisar(texto, tipo = 'info') {
  * Altas, bajas y recargas
  * ------------------------------------------------------------------ */
 
-async function agregar(texto) {
-  const riotId = validarRiotId(texto);
-  if (!riotId) {
-    avisar('Formato no válido: escribe Nombre#TAG (el tag tiene de 2 a 5 letras o números).', 'error');
+async function agregar(nombreBruto, tagBruto) {
+  const nombre = nombreBruto.trim();
+  const tag = tagBruto.trim().replace(/^#/, '');
+
+  if (!NOMBRE_VALIDO(nombre)) {
+    avisar(`${t('msj.nombreInvalido')} ${t('msj.tagInvalido')}`, 'error');
+    nodos.campoNombre.focus();
     return;
   }
+  if (!TAG_VALIDO(tag)) {
+    avisar(t('msj.tagInvalido'), 'error');
+    nodos.campoTag.focus();
+    return;
+  }
+
+  const riotId = unirRiotId(nombre, tag);
   if (yaEsta(riotId)) {
-    avisar(`${riotId} ya está en el grupo.`, 'error');
+    avisar(t('msj.yaEsta', { riotId }), 'error');
     return;
   }
   if (estado.miembros.length >= MAX_MIEMBROS) {
-    avisar(`El grupo admite hasta ${MAX_MIEMBROS} integrantes.`, 'error');
+    avisar(t('msj.limite', { max: MAX_MIEMBROS }), 'error');
     return;
   }
 
   nodos.botonAgregar.disabled = true;
-  avisar(`Consultando a ${riotId}…`, 'info');
+  avisar(t('msj.consultando', { riotId }), 'info');
 
   try {
-    const perfil = await obtenerJugador({ riotId, omitirRed: !navigator.onLine });
+    const perfil = await obtenerJugador({
+      riotId,
+      region: regionActual(),
+      omitirRed: !navigator.onLine,
+    });
 
     // El servidor devuelve las mayusculas y minusculas oficiales de la cuenta.
     const canonico = perfil.riotId || riotId;
     if (yaEsta(canonico)) {
-      avisar(`${canonico} ya está en el grupo.`, 'error');
+      avisar(t('msj.yaEsta', { riotId: canonico }), 'error');
       return;
     }
 
@@ -166,17 +203,18 @@ async function agregar(texto) {
     estado.ultimaCarga = new Date().toISOString();
     guardar();
     render();
-    avisar(`${canonico} se unió al grupo.`, 'ok');
-    nodos.campo.value = '';
+    avisar(t('msj.seUnio', { riotId: canonico }), 'ok');
+    nodos.campoNombre.value = '';
+    nodos.campoTag.value = '';
+    nodos.campoNombre.focus();
   } catch (error) {
     if (error instanceof ErrorDatos && (error.estado === 404 || error.estado === 400)) {
       avisar(error.message, 'error');
     } else {
-      avisar(`No se pudo comprobar ese Riot ID (${error.message}). Inténtalo con conexión.`, 'error');
+      avisar(t('msj.noComprobar', { error: error.message }), 'error');
     }
   } finally {
     nodos.botonAgregar.disabled = false;
-    nodos.campo.focus();
   }
 }
 
@@ -185,7 +223,7 @@ function quitar(riotId) {
   estado.datos.delete(claveDe(riotId));
   guardar();
   render();
-  avisar(`${riotId} salió del grupo.`, 'info');
+  avisar(t('msj.salio', { riotId }), 'info');
 }
 
 let peticionEnCurso = 0;
@@ -200,10 +238,11 @@ async function cargarTodos() {
   estado.cargando = true;
   render();
 
+  const region = regionActual();
   await Promise.allSettled(
     estado.miembros.map(async (riotId) => {
       try {
-        const perfil = await obtenerJugador({ riotId, omitirRed: !navigator.onLine });
+        const perfil = await obtenerJugador({ riotId, region, omitirRed: !navigator.onLine });
         if (mia === peticionEnCurso) estado.datos.set(claveDe(riotId), perfil);
       } catch (error) {
         if (mia === peticionEnCurso) {
@@ -225,7 +264,7 @@ async function cargarTodos() {
 
 async function compartir() {
   if (estado.miembros.length === 0) {
-    avisar('Agrega al menos un integrante antes de compartir.', 'error');
+    avisar(t('msj.compartirVacio'), 'error');
     return;
   }
 
@@ -235,14 +274,14 @@ async function compartir() {
 
   try {
     if (navigator.share) {
-      await navigator.share({ title: 'Mi grupo · Ranking LAN', url: url.toString() });
+      await navigator.share({ title: 'Ranking LAN', url: url.toString() });
       return;
     }
     await navigator.clipboard.writeText(url.toString());
-    avisar('Enlace del grupo copiado al portapapeles.', 'ok');
+    avisar(t('msj.enlaceCopiado'), 'ok');
   } catch (error) {
     if (error.name === 'AbortError') return; // el usuario cerro el dialogo del sistema
-    avisar(`No se pudo compartir: ${error.message}`, 'error');
+    avisar(t('msj.noCompartir', { error: error.message }), 'error');
   }
 }
 
@@ -253,7 +292,7 @@ function importarDesdeUrl(parametros) {
 
   let nuevos = 0;
   for (const bruto of lista.split(',')) {
-    const riotId = validarRiotId(bruto.trim());
+    const riotId = validarRiotIdTexto(bruto.trim());
     if (riotId && !yaEsta(riotId) && estado.miembros.length < MAX_MIEMBROS) {
       estado.miembros.push(riotId);
       nuevos++;
@@ -273,12 +312,6 @@ function elemento(etiqueta, clase, texto) {
   if (texto !== undefined) nodo.textContent = texto;
   return nodo;
 }
-
-/** "Oro II", "Retador" (la elite no muestra division) o "Sin clasificar". */
-const nombreRango = (entrada) =>
-  entrada
-    ? `${TIERS[entrada.tier] ?? entrada.tier}${TIERS_ALTOS.has(entrada.tier) ? '' : ` ${entrada.division}`}`
-    : 'Sin clasificar';
 
 function construirFila({ riotId, dato, entrada, puntos }, posicion) {
   const fila = elemento('tr');
@@ -313,7 +346,7 @@ function construirFila({ riotId, dato, entrada, puntos }, posicion) {
 
   /* Liga ----------------------------------------------------------- */
   const celdaLiga = elemento('td', 'col-liga');
-  const rango = elemento('span', 'rango', dato?.error ? 'Sin datos' : nombreRango(entrada));
+  const rango = elemento('span', 'rango', dato?.error ? t('grupo.sinDatos') : nombreRango(entrada));
   rango.dataset.tier = entrada?.tier ?? '';
   if (dato?.error) rango.title = dato.error;
   celdaLiga.append(rango);
@@ -345,18 +378,22 @@ function construirFila({ riotId, dato, entrada, puntos }, posicion) {
   const botonQuitar = elemento('button', 'btn-quitar', '×');
   botonQuitar.type = 'button';
   botonQuitar.dataset.accion = 'quitar';
-  botonQuitar.setAttribute('aria-label', `Quitar a ${riotId} del grupo`);
+  botonQuitar.setAttribute('aria-label', t('grupo.quitarAria', { riotId }));
   celdaQuitar.append(botonQuitar);
 
   fila.append(celdaPuesto, celdaJugador, celdaLiga, celdaLp, celdaVd, celdaWr, celdaQuitar);
   return fila;
 }
 
-const ETIQUETAS_FUENTE = {
-  [FUENTE.VIVO]: 'datos en vivo',
-  [FUENTE.CACHE]: 'incluye datos de caché',
-  [FUENTE.DEMO]: 'datos de demostración',
-};
+function filasOrdenadas() {
+  const filas = estado.miembros.map((riotId) => {
+    const dato = estado.datos.get(claveDe(riotId));
+    const entrada = dato && !dato.error ? dato.colas?.[estado.cola] ?? null : null;
+    return { riotId, dato, entrada, puntos: dato?.error ? -2 : puntuacionRango(entrada) };
+  });
+  filas.sort((a, b) => b.puntos - a.puntos || a.riotId.localeCompare(b.riotId, 'es'));
+  return filas;
+}
 
 function renderNota(filas) {
   if (estado.miembros.length === 0) {
@@ -365,7 +402,7 @@ function renderNota(filas) {
     return;
   }
   if (estado.cargando) {
-    nodos.nota.textContent = 'Consultando rangos…';
+    nodos.nota.textContent = t('grupo.consultando');
     return;
   }
 
@@ -373,24 +410,23 @@ function renderNota(filas) {
     filas.map(({ dato }) => (dato && !dato.error ? dato.fuente : null)).filter(Boolean),
   );
 
-  let etiqueta = 'sin datos';
-  if (fuentes.has(FUENTE.DEMO)) etiqueta = ETIQUETAS_FUENTE[FUENTE.DEMO];
-  else if (fuentes.has(FUENTE.CACHE)) etiqueta = ETIQUETAS_FUENTE[FUENTE.CACHE];
-  else if (fuentes.has(FUENTE.VIVO)) etiqueta = ETIQUETAS_FUENTE[FUENTE.VIVO];
+  let etiqueta = t('nota.sinDatos');
+  if (fuentes.has(FUENTE.DEMO)) etiqueta = t('nota.demo');
+  else if (fuentes.has(FUENTE.CACHE)) etiqueta = t('nota.cache');
+  else if (fuentes.has(FUENTE.VIVO)) etiqueta = t('nota.vivo');
 
   const relativo = tiempoRelativo(estado.ultimaCarga);
   const cuantos = estado.miembros.length;
   nodos.nota.textContent =
-    `${cuantos} integrante${cuantos === 1 ? '' : 's'} · ${etiqueta}` +
-    (relativo ? ` · actualizado ${relativo}` : '');
+    t('grupo.integrantes', { n: cuantos, plural: cuantos === 1 ? '' : 's' }) +
+    ` · ${etiqueta}` +
+    (relativo ? ` · ${t('nota.actualizado', { tiempo: relativo })}` : '');
 
   const esDemo = fuentes.has(FUENTE.DEMO);
   nodos.aviso.hidden = !esDemo;
   if (esDemo) {
     const conAviso = filas.find(({ dato }) => dato?.aviso);
-    nodos.avisoTexto.textContent =
-      conAviso?.dato.aviso ??
-      'Los rangos del grupo son ficticios: configura una RIOT_API_KEY para ver los reales.';
+    if (conAviso?.dato.aviso) nodos.avisoTexto.textContent = conAviso.dato.aviso;
   }
 }
 
@@ -400,14 +436,7 @@ function render() {
   nodos.botonActualizar.disabled = estado.cargando || !hayMiembros;
   nodos.botonActualizar.dataset.cargando = estado.cargando ? 'si' : 'no';
 
-  // Liga > division > LP; errores al final; empates por nombre.
-  const filas = estado.miembros.map((riotId) => {
-    const dato = estado.datos.get(claveDe(riotId));
-    const entrada = dato && !dato.error ? dato.colas?.[estado.cola] ?? null : null;
-    return { riotId, dato, entrada, puntos: dato?.error ? -2 : puntuacionRango(entrada) };
-  });
-  filas.sort((a, b) => b.puntos - a.puntos || a.riotId.localeCompare(b.riotId, 'es'));
-
+  const filas = filasOrdenadas();
   const fragmento = document.createDocumentFragment();
   filas.forEach((info, indice) => fragmento.append(construirFila(info, indice + 1)));
   nodos.cuerpo.replaceChildren(fragmento);
@@ -416,21 +445,141 @@ function render() {
 }
 
 /* ------------------------------------------------------------------ *
- * Detalle (reutiliza el dialogo de la vista global)
+ * Detalle: ficha + historial + comparacion + consejos
  * ------------------------------------------------------------------ */
 
-function abrirDetalleDe(riotId, posicion) {
+/** Promedios del grupo (excluyendo al propio jugador) en la cola activa. */
+function estadisticasGrupo(riotIdExcluido) {
+  const otros = filasOrdenadas().filter(
+    ({ riotId, entrada }) => entrada && claveDe(riotId) !== claveDe(riotIdExcluido),
+  );
+  if (otros.length === 0) return null;
+
+  const media = (fn) => otros.reduce((suma, x) => suma + fn(x.entrada), 0) / otros.length;
+  const mejor = otros.reduce((a, b) =>
+    (b.entrada.winrate ?? -1) > (a.entrada.winrate ?? -1) ? b : a,
+  );
+
+  return {
+    lpProm: media((e) => e.lp),
+    wrProm: media((e) => e.winrate ?? 0),
+    partidasProm: media((e) => e.partidas),
+    mejor: { riotId: mejor.riotId, winrate: mejor.entrada.winrate },
+    cuantos: otros.length,
+  };
+}
+
+/** Consejos honestos: derivados de numeros reales, sin humo. */
+function generarConsejos(entrada, historial, grupo, riotId) {
+  const consejos = [];
+
+  if (grupo) {
+    const difWr = (entrada.winrate ?? 0) - grupo.wrProm;
+    if (entrada.winrate !== null && difWr <= -3) {
+      consejos.push(t('consejo.winrateBajo', {
+        wr: entrada.winrate.toFixed(1),
+        dif: Math.abs(difWr).toFixed(1),
+      }));
+    } else if (entrada.winrate !== null && difWr >= 3) {
+      consejos.push(t('consejo.winrateAlto', { wr: entrada.winrate.toFixed(1) }));
+    }
+
+    if (entrada.partidas < grupo.partidasProm * 0.6) {
+      consejos.push(t('consejo.pocasPartidas', {
+        n: numero(entrada.partidas),
+        prom: numero(Math.round(grupo.partidasProm)),
+      }));
+    }
+
+    if (
+      grupo.mejor.winrate !== null &&
+      claveDe(grupo.mejor.riotId) !== claveDe(riotId) &&
+      (entrada.winrate ?? 0) < grupo.mejor.winrate
+    ) {
+      consejos.push(t('consejo.duo', {
+        nombre: partesDe(grupo.mejor.riotId).nombre,
+        wr: grupo.mejor.winrate.toFixed(1),
+      }));
+    }
+  }
+
+  if (historial && historial.length > 0) {
+    let derrotasSeguidas = 0;
+    for (const p of historial) {
+      if (p.victoria) break;
+      derrotasSeguidas++;
+    }
+    if (derrotasSeguidas >= 3) {
+      consejos.push(t('consejo.derrotas', { n: derrotasSeguidas }));
+    }
+
+    const muertesProm = historial.reduce((s, p) => s + p.d, 0) / historial.length;
+    if (muertesProm > 6.5) {
+      consejos.push(t('consejo.muereMenos', { muertes: muertesProm.toFixed(1) }));
+    }
+
+    const conCs = historial.filter((p) => p.cs > 0 && p.duracionSeg > 0 && p.posicion !== 'UTILITY');
+    if (conCs.length > 0) {
+      const csMin = conCs.reduce((s, p) => s + p.cs / (p.duracionSeg / 60), 0) / conCs.length;
+      if (csMin < 5.5) consejos.push(t('consejo.farmea', { cs: csMin.toFixed(1) }));
+    }
+  }
+
+  if (entrada.racha) consejos.push(t('consejo.racha'));
+  if (entrada.inactivo) consejos.push(t('consejo.inactivo'));
+  if (consejos.length === 0) consejos.push(t('consejo.general'));
+
+  return consejos.slice(0, 4);
+}
+
+async function abrirDetalleDe(riotId, posicion) {
   const dato = estado.datos.get(claveDe(riotId));
   const entrada = dato && !dato.error ? dato.colas?.[estado.cola] : null;
   if (!entrada) return;
 
   const { nombre, tag } = partesDe(riotId);
+  const region = regionActual();
+
   abrirDetalle(
     nodos.dialogo,
     nodos.dialogoNodos,
     { puesto: posicion, riotId, nombre, tag, ...entrada },
-    { cola: estado.cola, regionNombre: 'Latinoamérica Norte · Mi grupo' },
+    { cola: estado.cola, region },
   );
+
+  const extra = nodos.dialogoNodos.extra;
+
+  /* Comparacion contra el grupo: inmediata, con lo que ya esta en memoria. */
+  const grupo = estadisticasGrupo(riotId);
+  if (grupo) {
+    renderComparacion(extra, {
+      difLp: entrada.lp - grupo.lpProm,
+      difWr: (entrada.winrate ?? 0) - grupo.wrProm,
+      puesto: posicion,
+      total: estado.miembros.length,
+    });
+  }
+
+  /* Historial: asincrono; si el dialogo se cierra o cambia, se descarta. */
+  renderExtraMensaje(extra, t('historial.cargando'));
+  const marcador = extra.querySelector('.dialogo__cargando');
+
+  try {
+    const historial = await obtenerHistorial({
+      puuid: dato.puuid,
+      riotId,
+      region,
+      omitirRed: !navigator.onLine,
+    });
+    if (!marcador.isConnected) return; // se abrio otra ficha mientras tanto
+    marcador.remove();
+    renderHistorial(extra, historial.partidas);
+    renderConsejos(extra, generarConsejos(entrada, historial.partidas, grupo, riotId));
+  } catch (error) {
+    if (!marcador.isConnected) return;
+    marcador.textContent = t('historial.error', { error: error.message });
+    renderConsejos(extra, generarConsejos(entrada, null, grupo, riotId));
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -449,7 +598,7 @@ export function iniciarGrupo(parametros = new URLSearchParams()) {
 
   nodos.formulario.addEventListener('submit', (evento) => {
     evento.preventDefault();
-    agregar(nodos.campo.value);
+    agregar(nodos.campoNombre.value, nodos.campoTag.value);
   });
 
   nodos.selCola.addEventListener('change', () => {
@@ -474,6 +623,14 @@ export function iniciarGrupo(parametros = new URLSearchParams()) {
   addEventListener('online', () => {
     if (estado.miembros.length > 0) cargarTodos();
   });
+
+  // La region del selector global tambien manda en el grupo.
+  addEventListener('regioncambiada', () => {
+    if (estado.miembros.length > 0) cargarTodos();
+  });
+
+  // Cambio de idioma: solo repintar (las cadenas salen de t()).
+  addEventListener('idiomacambiado', () => render());
 
   render();
   if (estado.miembros.length > 0) cargarTodos();
