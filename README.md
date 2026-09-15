@@ -105,11 +105,24 @@ para que la PWA y `/api/ranking` compartan origen (requisito para el alcance del
 total: `ACCOUNT-V1`, `LEAGUE-V4` y `MATCH-V5`.
 
 **Todos los jugadores, con nombres progresivos.** El listado devuelve todas las filas del
-ladder (tope 500). Como cada Riot ID cuesta una llamada a `account-v1` y la clave de
-desarrollo permite 100 peticiones cada 2 minutos, el proxy resuelve los primeros
-`TOP_JUGADORES` nombres al momento y el resto en una cola en segundo plano (lotes de 5 cada
-7 s); mientras tanto la interfaz muestra un marcador y una nota con cuántos faltan, y se van
-completando en cada actualización.
+ladder (tope 500). Como cada Riot ID cuesta una llamada a `account-v1` y la clave permite
+**20 peticiones/s y 100 cada 2 minutos**, el proxy administra ese presupuesto con un contador
+exacto de ambas ventanas (`esperarTurno`), sincronizado con las cabeceras
+`X-App-Rate-Limit-Count` de Riot:
+
+- los primeros `TOP_JUGADORES` nombres se resuelven al momento (a ~18/s);
+- el resto lo drena una cola en segundo plano que consume **todo el presupuesto libre**,
+  pero deja siempre una reserva de ~22 peticiones para el tráfico interactivo;
+- al arrancar, el proxy **precalienta** la élite de la región por defecto, así el primer
+  visitante no paga el arranque en frío;
+- los listados cacheados se **rehidratan al servirse**: los nombres que la cola ya resolvió
+  aparecen sin esperar a que caduque el TTL.
+
+Con la ventana de 100/2 min, un ladder de 300 nombres tarda ~6-7 minutos en completarse la
+primera vez; después viven 24 h en caché. Ese es el techo de la clave personal: el camino
+oficial para subirlo es solicitar una **Production API Key** para el producto registrado
+(límites personalizados, bastante mayores). Usar varias claves para sumar cupo viola las
+políticas de Riot y arriesga la baja del producto.
 
 El campo `summonerName` de `league-v4` quedó obsoleto en noviembre de 2023, cuando Riot
 [migró a Riot ID](https://support-developer.riotgames.com/hc/en-us/articles/22698983117587-Summoner-Name-to-Riot-ID):

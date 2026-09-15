@@ -133,34 +133,108 @@ class ErrorRiot extends Error {
   }
 }
 
-async function pedirARiot(url, permitirReintento = true) {
-  if (Date.now() < esperarHasta) {
-    const faltanMs = esperarHasta - Date.now();
-    // Espera corta (limite por segundo): aguantamos en vez de fallar.
-    if (permitirReintento && faltanMs <= 2500) {
-      await new Promise((r) => setTimeout(r, faltanMs + 250));
-      return pedirARiot(url, false);
-    }
-    throw new ErrorRiot(
-      `Límite de peticiones activo, reintenta en ${Math.ceil(faltanMs / 1000)} s`,
-      429,
-      Math.ceil(faltanMs / 1000),
-    );
+/* --------------------------------------------------------------------------
+ * Presupuesto de peticiones (rate limit de la clave: 20/1 s y 100/2 min).
+ *
+ * En lugar de ritmos fijos conservadores, se contabiliza cada peticion en sus
+ * dos ventanas y se gasta TODO el presupuesto disponible. La cola de nombres
+ * en segundo plano pide turno con una RESERVA: nunca consume los ultimos
+ * huecos de la ventana de 2 minutos, que quedan para el trafico interactivo
+ * (listados, jugadores del grupo, historiales).
+ * -------------------------------------------------------------------------- */
+const LIMITE_SEGUNDO = 20;
+const LIMITE_VENTANA = 100;      // por 120 s
+const RESERVA_INTERACTIVA = 22;  // huecos de la ventana reservados a usuarios
+
+/** Marcas de tiempo (ms) de las peticiones enviadas, en orden cronologico. */
+const marcasPeticiones = [];
+
+function usoActual() {
+  const ahora = Date.now();
+  while (marcasPeticiones.length && ahora - marcasPeticiones[0] >= 120_000) {
+    marcasPeticiones.shift();
   }
+  let segundo = 0;
+  for (let i = marcasPeticiones.length - 1; i >= 0 && ahora - marcasPeticiones[i] < 1000; i--) {
+    segundo++;
+  }
+  return { segundo, ventana: marcasPeticiones.length };
+}
+
+/**
+ * Bloquea hasta que haya un hueco en ambas ventanas (y registra la peticion).
+ * reserva > 0 = trafico de fondo: espera lo que haga falta, incluso castigos
+ * largos de Riot. reserva = 0 = trafico interactivo: si el castigo o la
+ * ventana no dan para responder pronto, falla rapido para que el cliente
+ * caiga a su cache en lugar de colgar la peticion HTTP.
+ */
+async function esperarTurno(reserva = 0) {
+  for (;;) {
+    const castigoMs = esperarHasta - Date.now();
+    if (castigoMs > 0) {
+      if (reserva === 0 && castigoMs > 2500) {
+        throw new ErrorRiot(
+          `Límite de peticiones activo, reintenta en ${Math.ceil(castigoMs / 1000)} s`,
+          429,
+          Math.ceil(castigoMs / 1000),
+        );
+      }
+      await new Promise((r) => setTimeout(r, Math.min(castigoMs + 150, 5000)));
+      continue;
+    }
+
+    const { segundo, ventana } = usoActual();
+    // Margen de 2 por las peticiones en vuelo que Riot ya cuenta y nosotros no.
+    if (segundo <= LIMITE_SEGUNDO - 2 && ventana <= LIMITE_VENTANA - 2 - reserva) {
+      marcasPeticiones.push(Date.now());
+      return;
+    }
+    if (reserva === 0 && ventana > LIMITE_VENTANA - 4) {
+      throw new ErrorRiot('Presupuesto de peticiones agotado, reintenta en un momento', 429, 20);
+    }
+    await new Promise((r) => setTimeout(r, segundo > LIMITE_SEGUNDO - 4 ? 150 : 1200));
+  }
+}
+
+/**
+ * Riot devuelve el uso real en X-App-Rate-Limit-Count ("3:1,45:120"). Tras un
+ * reinicio de la tarea el contador local parte de cero: esta sincronizacion
+ * adopta el conteo del servidor cuando es mayor, para no reventar la ventana.
+ */
+function sincronizarConCabeceras(respuesta) {
+  const conteo = respuesta.headers.get('X-App-Rate-Limit-Count');
+  if (!conteo) return;
+  for (const par of conteo.split(',')) {
+    const [usadas, ventanaSeg] = par.split(':').map(Number);
+    if (ventanaSeg !== 120 || !Number.isFinite(usadas)) continue;
+    const { ventana } = usoActual();
+    if (usadas > ventana) {
+      const marca = Date.now() - 5000; // dentro de la ventana, fuera del ultimo segundo
+      for (let i = ventana; i < usadas; i++) marcasPeticiones.push(marca);
+      marcasPeticiones.sort((a, b) => a - b);
+    }
+  }
+}
+
+async function pedirARiot(url, opciones = {}) {
+  const { reintento = true, reserva = 0 } = opciones;
+
+  await esperarTurno(reserva);
 
   const respuesta = await fetch(url, {
     headers: { 'X-Riot-Token': CONFIG.clave, Accept: 'application/json' },
     signal: AbortSignal.timeout(10_000),
   });
+  sincronizarConCabeceras(respuesta);
 
   if (respuesta.status === 429) {
     const espera = Number(respuesta.headers.get('Retry-After') ?? 10);
     esperarHasta = Date.now() + espera * 1000;
-    // Un 429 con Retry-After de 1-2 s es el limite POR SEGUNDO: se reintenta
-    // una vez en silencio en lugar de degradar la respuesta a demo.
-    if (permitirReintento && espera <= 2) {
+    // Un 429 con Retry-After corto es el limite POR SEGUNDO: se reintenta una
+    // vez en silencio en lugar de degradar la respuesta a demo.
+    if (reintento && espera <= 2) {
       await new Promise((r) => setTimeout(r, espera * 1000 + 250));
-      return pedirARiot(url, false);
+      return pedirARiot(url, { reintento: false, reserva });
     }
     throw new ErrorRiot(`Riot devolvió 429 (rate limit). Espera ${espera} s.`, 429, espera);
   }
@@ -180,28 +254,26 @@ async function pedirARiot(url, permitirReintento = true) {
   return respuesta.json();
 }
 
-/** Ejecuta tareas con un limite de concurrencia, para no disparar el rate limit. */
+/** Ejecuta tareas con un limite de concurrencia. El ritmo real lo marca
+    esperarTurno(): aqui solo se limita cuantas van en vuelo a la vez. */
 async function enLotes(elementos, tamanoLote, tarea) {
   const salida = [];
   for (let i = 0; i < elementos.length; i += tamanoLote) {
     const lote = elementos.slice(i, i + tamanoLote);
     salida.push(...(await Promise.all(lote.map(tarea))));
-    // Pausa entre lotes: la clave de desarrollo permite 20 peticiones/s y las
-    // rafagas de nombres compiten con el resto del trafico. 5 cada 500 ms
-    // deja el pico en ~10/s, con margen.
-    if (i + tamanoLote < elementos.length) await new Promise((r) => setTimeout(r, 500));
   }
   return salida;
 }
 
 /** puuid -> Riot ID (gameName#tagLine) usando account-v1 en el ruteo indicado. */
-async function resolverRiotId(puuid, ruteoCuenta) {
+async function resolverRiotId(puuid, ruteoCuenta, opciones = {}) {
   const guardado = cacheNombres.get(puuid);
   if (guardado && Date.now() - guardado.momento < TTL_NOMBRES_MS) return guardado.valor;
 
   try {
     const cuenta = await pedirARiot(
       `https://${ruteoCuenta}.api.riotgames.com/riot/account/v1/accounts/by-puuid/${encodeURIComponent(puuid)}`,
+      opciones,
     );
     const valor = { nombre: cuenta.gameName ?? '', tag: cuenta.tagLine ?? '' };
     cacheNombres.set(puuid, { valor, momento: Date.now() });
@@ -237,7 +309,7 @@ function encolarNombres(entradas, ruteoCuenta) {
   for (const entrada of entradas) {
     const puuid = entrada.puuid;
     if (!puuid || enColaNombres.has(puuid) || nombreEnCache(puuid)) continue;
-    if (colaNombres.length >= 1000) break; // no crecer sin limite
+    if (colaNombres.length >= 2000) break; // no crecer sin limite
     colaNombres.push({ puuid, ruteoCuenta });
     enColaNombres.add(puuid);
   }
@@ -248,21 +320,19 @@ async function procesarColaNombres() {
   if (resolviendoNombres || !CONFIG.clave) return;
   resolviendoNombres = true;
   try {
-    while (colaNombres.length > 0) {
-      if (Date.now() < esperarHasta) {
-        await new Promise((r) => setTimeout(r, esperarHasta - Date.now() + 1000));
+    // 4 trabajadores en paralelo. El ritmo real lo marca esperarTurno() con
+    // RESERVA_INTERACTIVA: la cola consume todo el presupuesto LIBRE de la
+    // ventana de 2 minutos y se frena sola cuando hay trafico de usuarios.
+    const trabajador = async () => {
+      while (colaNombres.length > 0) {
+        const { puuid, ruteoCuenta } = colaNombres.shift();
+        try {
+          await resolverRiotId(puuid, ruteoCuenta, { reserva: RESERVA_INTERACTIVA });
+        } catch { /* la cola nunca muere por un nombre */ }
+        finally { enColaNombres.delete(puuid); }
       }
-      const lote = colaNombres.splice(0, 5);
-      await Promise.allSettled(
-        lote.map(({ puuid, ruteoCuenta }) =>
-          resolverRiotId(puuid, ruteoCuenta).finally(() => enColaNombres.delete(puuid)),
-        ),
-      );
-      // Ritmo prudente: 5 cada 15 s = ~40 de las 100 peticiones/2 min de una
-      // clave de desarrollo. El resto del presupuesto queda para el trafico
-      // interactivo (un listado nuevo cuesta ~26 llamadas).
-      await new Promise((r) => setTimeout(r, 15_000));
-    }
+    };
+    await Promise.all(Array.from({ length: 4 }, trabajador));
   } finally {
     resolviendoNombres = false;
   }
@@ -277,7 +347,7 @@ async function procesarColaNombres() {
  * CONFIG.top se resuelven aqui; el resto sale de cache o se encola para el
  * resolvedor en segundo plano y llega como riotId=null mientras tanto.
  */
-async function obtenerListadoReal(region, cola, tier, division) {
+async function obtenerListadoReal(region, cola, tier, division, nombresSincronos = CONFIG.top) {
   const ruteo = REGIONES[region];
   let entradas;
   let nombreLiga = null;
@@ -302,8 +372,8 @@ async function obtenerListadoReal(region, cola, tier, division) {
   // resuelve con account-v1 a partir del puuid, solo para la cabeza del listado.
   // Un 429 al resolver UN nombre no debe tumbar el listado completo: ese
   // nombre queda pendiente (placeholder) y lo recoge la cola en segundo plano.
-  const cabeza = entradas.slice(0, CONFIG.top);
-  const nombresCabeza = await enLotes(cabeza, 5, (entrada) =>
+  const cabeza = entradas.slice(0, nombresSincronos);
+  const nombresCabeza = await enLotes(cabeza, 10, (entrada) =>
     entrada.puuid
       ? resolverRiotId(entrada.puuid, ruteo.cuenta).catch(() => null)
       : Promise.resolve(null),
@@ -352,6 +422,42 @@ async function obtenerListadoReal(region, cola, tier, division) {
     nombresPendientes: pendientes,
     jugadores,
   };
+}
+
+/**
+ * Rellena en un listado cacheado los nombres que la cola de fondo ya resolvio
+ * y re-encola los que sigan pendientes (por si la cola se vacio o reinicio).
+ */
+function hidratarListado(listado, region) {
+  if (!listado.nombresPendientes) return listado;
+
+  let pendientes = 0;
+  const sinNombre = [];
+  const jugadores = listado.jugadores.map((jugador) => {
+    if (jugador.riotId || !jugador.puuid) {
+      if (!jugador.riotId) pendientes++;
+      return jugador;
+    }
+    const identidad = nombreEnCache(jugador.puuid);
+    if (!identidad?.nombre) {
+      pendientes++;
+      sinNombre.push(jugador);
+      return jugador;
+    }
+    return {
+      ...jugador,
+      riotId: identidad.tag ? `${identidad.nombre}#${identidad.tag}` : identidad.nombre,
+      nombre: identidad.nombre,
+      tag: identidad.tag,
+    };
+  });
+
+  if (sinNombre.length > 0) encolarNombres(sinNombre, REGIONES[region].cuenta);
+  const hidratado = { ...listado, jugadores, nombresPendientes: pendientes };
+  // El propio objeto cacheado se actualiza: la proxima peticion parte de aqui.
+  cacheListados.get(`${region}|${listado.cola}|${listado.tier}|${listado.division}`) &&
+    (cacheListados.get(`${region}|${listado.cola}|${listado.tier}|${listado.division}`).valor = hidratado);
+  return hidratado;
 }
 
 /* ==========================================================================
@@ -449,7 +555,9 @@ async function manejarRanking(url, respuesta) {
   const claveCache = `${region}|${cola}|${tier}|${division}`;
   const guardado = cacheListados.get(claveCache);
   if (guardado && Date.now() - guardado.momento < CONFIG.ttlMs) {
-    return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'memoria' });
+    // La cola de fondo sigue resolviendo nombres mientras el listado vive en
+    // cache: se rellenan al servir, sin esperar a que caduque el TTL.
+    return json(respuesta, 200, hidratarListado(guardado.valor, region), { 'X-Ranking-Cache': 'memoria' });
   }
 
   // Sin clave: servimos la demo. La PWA lo indica en la interfaz.
@@ -872,6 +980,14 @@ const servidor = createServer(async (peticion, respuesta) => {
         listadosEnCache: [...cacheListados.keys()],
         nombresEnCache: cacheNombres.size,
         nombresEnCola: colaNombres.length,
+        presupuesto: (() => {
+          const { segundo, ventana } = usoActual();
+          return {
+            usadoUltimoSegundo: `${segundo}/${LIMITE_SEGUNDO}`,
+            usadoVentana2min: `${ventana}/${LIMITE_VENTANA}`,
+            reservaInteractiva: RESERVA_INTERACTIVA,
+          };
+        })(),
       });
     }
 
@@ -883,6 +999,30 @@ const servidor = createServer(async (peticion, respuesta) => {
     else respuesta.end();
   }
 });
+
+/**
+ * Calentamiento: al arrancar (primera vez o tras un reinicio de la tarea) se
+ * precargan los listados de la elite de la region por defecto SIN resolver
+ * nombres en linea (nombresSincronos = 0): las listas cuestan 3 llamadas y
+ * todos los nombres pasan a la cola de fondo, que usa el presupuesto libre.
+ * Asi el primer visitante encuentra el ladder ya servido y los nombres
+ * apareciendo, en vez de pagar el arranque en frio.
+ */
+async function calentarCache() {
+  if (!CONFIG.clave) return;
+  for (const tier of Object.keys(TIERS_VALIDOS)) {
+    try {
+      const listado = await obtenerListadoReal(CONFIG.plataforma, 'RANKED_SOLO_5x5', tier, 'I', 0);
+      cacheListados.set(`${CONFIG.plataforma}|RANKED_SOLO_5x5|${tier}|I`, {
+        valor: listado,
+        momento: Date.now(),
+      });
+      console.log(`[proxy] calentado ${CONFIG.plataforma} ${tier}: ${listado.total} jugadores`);
+    } catch (error) {
+      console.warn(`[proxy] calentamiento ${tier}: ${error.message}`);
+    }
+  }
+}
 
 servidor.listen(CONFIG.puerto, () => {
   const linea = '─'.repeat(58);
@@ -896,12 +1036,16 @@ servidor.listen(CONFIG.puerto, () => {
   console.log(linea);
   if (CONFIG.clave) {
     console.log(`  Clave de Riot detectada · plataforma ${CONFIG.plataforma} · top ${CONFIG.top}`);
-    console.log('  Recuerda: las claves de desarrollo caducan cada 24 horas.');
+    console.log(`  Presupuesto: ${LIMITE_SEGUNDO}/s y ${LIMITE_VENTANA}/2 min · reserva interactiva ${RESERVA_INTERACTIVA}`);
   } else {
     console.log('  Sin RIOT_API_KEY: se sirven datos de DEMOSTRACIÓN.');
     console.log('  Para datos reales:  RIOT_API_KEY=RGAPI-... node servidor/proxy.mjs');
   }
   console.log(linea);
+
+  // El calentamiento corre despues de abrir el puerto: no bloquea el arranque
+  // ni el health check del balanceador.
+  calentarCache();
 });
 
 for (const senal of ['SIGINT', 'SIGTERM']) {
