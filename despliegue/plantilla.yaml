@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Ranking LAN: la PWA y su proxy de la API de Riot corriendo en ECS Fargate,
+  detras de un Application Load Balancer. Opcionalmente una distribucion de
+  CloudFront delante del ALB para servir con HTTPS (requisito para que el
+  service worker y la instalacion de la PWA funcionen en publico).
+
+Parameters:
+  Imagen:
+    Type: String
+    Description: URI completa de la imagen en ECR, incluida la etiqueta.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC donde vive todo (normalmente la VPC por defecto).
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subredes publicas en al menos dos zonas de disponibilidad.
+
+  RiotApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: >-
+      Clave de la API de Riot. Vacia = la app corre en modo demostracion.
+      Las claves de desarrollo caducan cada 24 h; se actualiza re-desplegando.
+
+  Arquitectura:
+    Type: String
+    Default: ARM64
+    AllowedValues: [ARM64, X86_64]
+    Description: Debe coincidir con la plataforma con la que se construyo la imagen.
+
+  HabilitarHttps:
+    Type: String
+    Default: si
+    AllowedValues: [si, 'no']
+    Description: >-
+      Crea una distribucion de CloudFront (HTTPS gratis en *.cloudfront.net).
+      Sin HTTPS el sitio funciona, pero el navegador no registra el service
+      worker ni ofrece instalar la PWA: no es un contexto seguro.
+
+Conditions:
+  ConCloudFront: !Equals [!Ref HabilitarHttps, si]
+
+Resources:
+  # ========================================================================
+  # Registros
+  # ========================================================================
+  Registros:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}
+      RetentionInDays: 7
+
+  # ========================================================================
+  # IAM: solo lo que ECS necesita para arrancar la tarea (ECR + logs)
+  # ========================================================================
+  RolEjecucion:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Rol de ejecucion de la tarea de Ranking LAN (pull de ECR y logs)
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # ========================================================================
+  # Red: el ALB recibe de internet; la tarea SOLO recibe del ALB
+  # ========================================================================
+  SeguridadAlb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Ranking LAN - ALB publico (HTTP 80)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP desde internet (y desde CloudFront si esta habilitado)
+
+  SeguridadTarea:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Ranking LAN - tareas Fargate (solo trafico del ALB)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref SeguridadAlb
+          Description: Solo el ALB puede hablar con el contenedor
+
+  # ========================================================================
+  # Balanceador
+  # ========================================================================
+  BalanceadorCargas:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      SecurityGroups: [!Ref SeguridadAlb]
+      Subnets: !Ref SubnetIds
+
+  GrupoDestino:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Protocol: HTTP
+      Port: 8080
+      VpcId: !Ref VpcId
+      # /api/estado responde 200 con JSON sin tocar la API de Riot: ideal
+      # como health check porque no consume cuota ni depende de la clave.
+      HealthCheckPath: /api/estado
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '15'
+
+  Oyente80:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref BalanceadorCargas
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GrupoDestino
+
+  # ========================================================================
+  # ECS Fargate
+  # ========================================================================
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref AWS::StackName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+
+  DefinicionTarea:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref AWS::StackName
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: !Ref Arquitectura
+      ExecutionRoleArn: !GetAtt RolEjecucion.Arn
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref Imagen
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: PUERTO
+              Value: '8080'
+            - Name: RIOT_API_KEY
+              Value: !Ref RiotApiKey
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref Registros
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+
+  Servicio:
+    Type: AWS::ECS::Service
+    # El listener debe existir antes de que el servicio se registre en el TG.
+    DependsOn: Oyente80
+    Properties:
+      ServiceName: !Ref AWS::StackName
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref DefinicionTarea
+      HealthCheckGracePeriodSeconds: 30
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          # En la VPC por defecto no hay NAT: la tarea necesita IP publica
+          # para descargar la imagen de ECR. El security group sigue cerrando
+          # todo el trafico entrante que no venga del ALB.
+          AssignPublicIp: ENABLED
+          SecurityGroups: [!Ref SeguridadTarea]
+          Subnets: !Ref SubnetIds
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: 8080
+          TargetGroupArn: !Ref GrupoDestino
+
+  # ========================================================================
+  # CloudFront (opcional): HTTPS delante del ALB
+  # ========================================================================
+  Distribucion:
+    Type: AWS::CloudFront::Distribution
+    Condition: ConCloudFront
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub HTTPS para ${AWS::StackName} (PWA sobre contexto seguro)
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: alb
+            DomainName: !GetAtt BalanceadorCargas.DNSName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+        DefaultCacheBehavior:
+          TargetOriginId: alb
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          # Managed-CachingOptimized: cachea estaticos respetando Cache-Control
+          # del origen (el proxy manda no-cache para HTML y sw.js).
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CacheBehaviors:
+          # Los datos del ranking y del grupo nunca se cachean en el borde:
+          # el service worker del navegador ya decide que guardar.
+          - PathPattern: /api/*
+            TargetOriginId: alb
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            Compress: true
+            # Managed-CachingDisabled
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            # Managed-AllViewerExceptHostHeader: pasa la query string completa
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  DnsAlb:
+    Description: DNS del Application Load Balancer
+    Value: !GetAtt BalanceadorCargas.DNSName
+
+  UrlAlb:
+    Description: URL por HTTP directa al ALB (sin service worker ni instalacion)
+    Value: !Sub http://${BalanceadorCargas.DNSName}/
+
+  UrlHttps:
+    Condition: ConCloudFront
+    Description: URL con HTTPS via CloudFront (la PWA completa funciona aqui)
+    Value: !Sub https://${Distribucion.DomainName}/
+
+  IdDistribucion:
+    Condition: ConCloudFront
+    Description: Id de la distribucion de CloudFront (para invalidaciones)
+    Value: !Ref Distribucion

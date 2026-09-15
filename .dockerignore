@@ -1,0 +1,19 @@
+# Secretos: la clave viaja como variable de entorno de la tarea, jamas en la imagen.
+.env
+.env.*
+!.env.example
+
+# Desarrollo local
+.git
+.gitignore
+node_modules
+*.log
+.DS_Store
+
+# Solo se usan en desarrollo (generar iconos/datos, pruebas con Chrome)
+herramientas/
+
+# Infraestructura: no hace falta dentro del contenedor
+despliegue/
+Dockerfile
+.dockerignore

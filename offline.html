@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Sin conexi&oacute;n · Ranking LAN</title>
+  <meta name="theme-color" content="#0a1428">
+  <link rel="icon" href="./iconos/favicon.svg" type="image/svg+xml">
+  <style>
+    *{ margin:0; padding:0; box-sizing:border-box; }
+    body{
+      min-height:100dvh;
+      display:grid; place-items:center;
+      padding:24px;
+      font-family:'Trebuchet MS', system-ui, -apple-system, Segoe UI, sans-serif;
+      background:
+        radial-gradient(60% 45% at 50% 0%, rgba(200,170,110,.16), transparent 70%),
+        linear-gradient(160deg, #0a1428, #04070d);
+      color:#f0e6d2;
+      text-align:center;
+    }
+    .caja{ max-width:420px; }
+    .icono{ font-size:64px; line-height:1; }
+    h1{ font-size:26px; margin:16px 0 10px; letter-spacing:.5px; }
+    p{ color:#a09b8c; line-height:1.6; font-size:15px; }
+    button{
+      margin-top:24px;
+      font:inherit; font-weight:700;
+      color:#0a1428;
+      background:linear-gradient(180deg,#f0e6d2,#c8aa6e);
+      border:0; border-radius:10px;
+      padding:12px 22px;
+      cursor:pointer;
+    }
+    button:hover{ filter:brightness(1.08); }
+    button:focus-visible{ outline:3px solid #c8aa6e; outline-offset:3px; }
+  </style>
+</head>
+<body>
+  <div class="caja">
+    <div class="icono" aria-hidden="true">📡</div>
+    <h1>Sin conexi&oacute;n</h1>
+    <p>
+      No pudimos cargar esta pantalla y todav&iacute;a no hay una copia guardada en cach&eacute;.
+      Abre la app una vez con internet para que el <em>service worker</em> guarde el ranking y
+      pueda funcionar offline.
+    </p>
+    <button type="button" onclick="location.reload()">Reintentar</button>
+  </div>
+  <script>
+    addEventListener('online', () => location.reload());
+  </script>
+</body>
+</html>

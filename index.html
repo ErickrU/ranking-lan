@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Ranking LAN · Mejores jugadores de League of Legends</title>
+  <meta name="description" content="Ranking de los mejores jugadores de League of Legends en la region LAN (Latinoamerica Norte): Challenger, Gran Maestro y Maestro. Aplicacion web progresiva instalable y con soporte offline.">
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <meta name="theme-color" content="#0a1428">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Iconos -->
+  <link rel="icon" href="./iconos/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./iconos/apple-touch-icon.png">
+
+  <!-- iOS: modo pantalla completa al instalar desde Safari -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Ranking LAN">
+
+  <link rel="stylesheet" href="./css/estilos.css">
+</head>
+<body>
+  <a class="salto-contenido" href="#contenido">Saltar al contenido</a>
+
+  <!-- ============================ CABECERA ============================ -->
+  <header class="cabecera">
+    <div class="cabecera__marca">
+      <img class="cabecera__logo" src="./iconos/favicon.svg" alt="" width="44" height="44">
+      <div>
+        <h1 class="cabecera__titulo">Ranking&nbsp;LAN</h1>
+        <p class="cabecera__sub">League of Legends · Latinoam&eacute;rica Norte (<code>la1</code>)</p>
+      </div>
+    </div>
+
+    <div class="cabecera__acciones">
+      <button id="btn-instalar" class="boton boton--fantasma" type="button" hidden>
+        <span aria-hidden="true">⬇</span> Instalar app
+      </button>
+      <button id="btn-actualizar" class="boton boton--oro" type="button">
+        <span class="icono-refrescar" aria-hidden="true">⟳</span>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================ BARRA DE ESTADO ============================ -->
+  <div class="estado" role="status" aria-live="polite">
+    <span id="chip-conexion" class="chip chip--conexion" data-estado="en-linea">
+      <span class="punto" aria-hidden="true"></span><span class="chip__texto">En l&iacute;nea</span>
+    </span>
+    <span id="chip-fuente" class="chip chip--fuente" data-fuente="cargando">
+      <span class="chip__texto">Cargando&hellip;</span>
+    </span>
+    <span id="texto-actualizado" class="estado__tiempo"></span>
+  </div>
+
+  <!-- ============================ PESTA&Ntilde;AS ============================ -->
+  <nav class="pestanas" role="tablist" aria-label="Secciones de la aplicaci&oacute;n">
+    <button class="pestana" id="tab-global" role="tab" type="button"
+            aria-selected="true" aria-controls="vista-global">
+      <span aria-hidden="true">🌎</span> Ranking LAN
+    </button>
+    <button class="pestana" id="tab-grupo" role="tab" type="button"
+            aria-selected="false" aria-controls="vista-grupo" tabindex="-1">
+      <span aria-hidden="true">👥</span> Mi grupo
+    </button>
+  </nav>
+
+  <main id="contenido" class="contenido">
+
+    <!-- ╔══════════════════════ VISTA: RANKING GLOBAL ══════════════════════╗ -->
+    <div id="vista-global" class="vista" role="tabpanel" aria-labelledby="tab-global">
+
+    <!-- Aviso: los datos mostrados son de demostracion -->
+    <div id="aviso-demo" class="aviso" hidden>
+      <strong>Modo demostraci&oacute;n.</strong>
+      <span id="aviso-demo-texto"></span>
+    </div>
+
+    <!-- ============================ CONTROLES ============================ -->
+    <section class="panel controles" aria-label="Filtros del ranking">
+      <div class="control">
+        <label for="sel-cola">Cola</label>
+        <select id="sel-cola">
+          <option value="RANKED_SOLO_5x5" selected>Solo / D&uacute;o</option>
+          <option value="RANKED_FLEX_SR">Flexible</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <label for="sel-tier">Liga</label>
+        <select id="sel-tier">
+          <option value="CHALLENGER" selected>Retador (Challenger)</option>
+          <option value="GRANDMASTER">Gran Maestro</option>
+          <option value="MASTER">Maestro</option>
+        </select>
+      </div>
+
+      <div class="control control--ancho">
+        <label for="sel-orden">Ordenar por</label>
+        <select id="sel-orden">
+          <option value="lp-desc" selected>LP (mayor a menor)</option>
+          <option value="lp-asc">LP (menor a mayor)</option>
+          <option value="wr-desc">Winrate</option>
+          <option value="partidas-desc">Partidas jugadas</option>
+          <option value="nombre-asc">Nombre (A-Z)</option>
+        </select>
+      </div>
+
+      <div class="control control--crece">
+        <label for="campo-buscar">Buscar jugador</label>
+        <div class="buscador">
+          <span class="buscador__icono" aria-hidden="true">🔍</span>
+          <input id="campo-buscar" type="search" placeholder="Riot ID, p. ej. Jaguar" autocomplete="off"
+                 enterkeyhint="search">
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ RESUMEN ============================ -->
+    <section class="resumen" aria-label="Resumen de la liga">
+      <div class="metrica">
+        <span class="metrica__valor" id="m-total">–</span>
+        <span class="metrica__etiqueta">Jugadores</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__valor" id="m-lp-max">–</span>
+        <span class="metrica__etiqueta">LP m&aacute;s alto</span>
+      </div>
+      <div class="metrica" title="LP del último jugador de este listado. No es el corte oficial de la liga: el listado está recortado al top que devuelve el servidor.">
+        <span class="metrica__valor" id="m-lp-min">–</span>
+        <span class="metrica__etiqueta">LP m&aacute;s bajo</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica__valor" id="m-winrate">–</span>
+        <span class="metrica__etiqueta">Winrate promedio</span>
+      </div>
+    </section>
+
+    <!-- ============================ PODIO ============================ -->
+    <section id="podio" class="podio" aria-label="Los tres primeros puestos"></section>
+
+    <!-- ============================ TABLA ============================ -->
+    <section class="panel">
+      <div class="panel__cabecera">
+        <h2 id="titulo-tabla" class="panel__titulo">Clasificaci&oacute;n</h2>
+        <p id="conteo-visible" class="panel__nota"></p>
+      </div>
+
+      <div class="tabla-envoltorio">
+        <table class="tabla">
+          <caption class="visualmente-oculto">
+            Ranking de jugadores de League of Legends en la region LAN, ordenado seg&uacute;n el filtro
+            seleccionado. Usa las flechas para navegar y Enter para ver el detalle de un jugador.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col" class="col-puesto">#</th>
+              <th scope="col">Jugador</th>
+              <th scope="col" class="col-lp">LP</th>
+              <th scope="col" class="col-vd">V / D</th>
+              <th scope="col" class="col-wr">Winrate</th>
+            </tr>
+          </thead>
+          <tbody id="cuerpo-tabla"></tbody>
+        </table>
+
+        <!-- Estados vacio / cargando -->
+        <p id="mensaje-vacio" class="mensaje-vacio" hidden></p>
+        <div id="cargando" class="cargando" hidden>
+          <span class="spinner" aria-hidden="true"></span> Consultando el ladder de LAN&hellip;
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ INFO PWA ============================ -->
+    <details class="panel acordeon">
+      <summary>&iquest;C&oacute;mo funciona esta PWA?</summary>
+      <ul class="lista-pwa">
+        <li><strong>Instalable:</strong> el <code>manifest.webmanifest</code> permite a&ntilde;adirla a la
+          pantalla de inicio y abrirla en su propia ventana, sin barra del navegador.</li>
+        <li><strong>Offline:</strong> un <em>service worker</em> guarda en cach&eacute; el app shell
+          (HTML, CSS, JS e iconos) y la &uacute;ltima clasificaci&oacute;n descargada, as&iacute; que la app
+          abre y muestra datos aunque no haya red.</li>
+        <li><strong>Datos frescos:</strong> las peticiones de datos usan <em>network-first</em>: primero
+          intentan la red y, si falla o tarda demasiado, sirven la copia en cach&eacute;.</li>
+        <li><strong>Clave protegida:</strong> la API de Riot no se puede llamar desde el navegador, por lo
+          que un peque&ntilde;o proxy en Node guarda la <code>RIOT_API_KEY</code> del lado del servidor.</li>
+        <li><strong>Tu grupo, en tu dispositivo:</strong> los Riot ID de &laquo;Mi grupo&raquo; viven en
+          <code>localStorage</code> y sus rangos en la Cache API, as&iacute; que tu clasificaci&oacute;n
+          privada tambi&eacute;n se consulta sin conexi&oacute;n.</li>
+      </ul>
+      <p class="estado-sw" id="estado-sw">Service worker: comprobando&hellip;</p>
+    </details>
+
+    </div>
+    <!-- ╚══════════════════════ FIN VISTA GLOBAL ══════════════════════╝ -->
+
+    <!-- ╔══════════════════════ VISTA: MI GRUPO ══════════════════════╗ -->
+    <div id="vista-grupo" class="vista" role="tabpanel" aria-labelledby="tab-grupo" hidden>
+
+      <section class="panel" aria-label="Administrar mi grupo">
+        <div class="panel__cabecera">
+          <h2 class="panel__titulo">Mi grupo de amigos</h2>
+          <p class="panel__nota">Se guarda solo en este dispositivo</p>
+        </div>
+        <p class="grupo-intro">
+          Agrega los Riot ID de tus amigos (formato <code>Nombre#TAG</code>) y comp&aacute;ralos en una
+          clasificaci&oacute;n propia, aparte del ranking global: liga, divisi&oacute;n y LP deciden el orden.
+          Nadie m&aacute;s ve tu lista; si quieres, env&iacute;ala con &laquo;Compartir grupo&raquo;.
+        </p>
+        <form id="form-amigo" class="grupo-formulario" novalidate>
+          <label class="visualmente-oculto" for="campo-riot-id">Riot ID del integrante</label>
+          <input id="campo-riot-id" type="text" placeholder="Nombre#TAG · p. ej. VicunaSereno#LAN1"
+                 autocomplete="off" maxlength="24" enterkeyhint="done">
+          <button id="btn-agregar" class="boton boton--oro" type="submit">Agregar</button>
+        </form>
+        <p id="grupo-mensaje" class="grupo-mensaje" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel">
+        <div class="panel__cabecera">
+          <h2 class="panel__titulo">Clasificaci&oacute;n del grupo</h2>
+          <p id="grupo-nota" class="panel__nota"></p>
+        </div>
+
+        <div class="grupo-controles">
+          <div class="control">
+            <label for="grupo-cola">Cola</label>
+            <select id="grupo-cola">
+              <option value="RANKED_SOLO_5x5" selected>Solo / D&uacute;o</option>
+              <option value="RANKED_FLEX_SR">Flexible</option>
+            </select>
+          </div>
+          <button id="btn-grupo-actualizar" class="boton" type="button">
+            <span class="icono-refrescar" aria-hidden="true">⟳</span> Actualizar rangos
+          </button>
+          <button id="btn-grupo-compartir" class="boton boton--fantasma" type="button">
+            <span aria-hidden="true">🔗</span> Compartir grupo
+          </button>
+        </div>
+
+        <div id="grupo-aviso" class="aviso" hidden>
+          <strong>Modo demostraci&oacute;n.</strong>
+          <span id="grupo-aviso-texto"></span>
+        </div>
+
+        <div class="tabla-envoltorio">
+          <table class="tabla">
+            <caption class="visualmente-oculto">
+              Rangos de los integrantes de tu grupo en la regi&oacute;n LAN, ordenados del rango m&aacute;s
+              alto al m&aacute;s bajo seg&uacute;n liga, divisi&oacute;n y puntos de liga.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col" class="col-puesto">#</th>
+                <th scope="col">Jugador</th>
+                <th scope="col" class="col-liga">Liga</th>
+                <th scope="col" class="col-lp">LP</th>
+                <th scope="col" class="col-vd">V / D</th>
+                <th scope="col" class="col-wr">Winrate</th>
+                <th scope="col" class="col-quitar"><span class="visualmente-oculto">Quitar</span></th>
+              </tr>
+            </thead>
+            <tbody id="grupo-cuerpo"></tbody>
+          </table>
+          <p id="grupo-vacio" class="mensaje-vacio">
+            Tu grupo est&aacute; vac&iacute;o. Agrega el primer Riot ID arriba para empezar a comparar rangos.
+          </p>
+        </div>
+      </section>
+
+    </div>
+    <!-- ╚══════════════════════ FIN VISTA MI GRUPO ══════════════════════╝ -->
+
+  </main>
+
+  <!-- ============================ DETALLE ============================ -->
+  <dialog id="dialogo" class="dialogo" aria-labelledby="dialogo-titulo">
+    <form method="dialog" class="dialogo__cerrar-form">
+      <button class="dialogo__cerrar" value="cerrar" aria-label="Cerrar detalle">×</button>
+    </form>
+    <h3 id="dialogo-titulo" class="dialogo__titulo"></h3>
+    <p id="dialogo-sub" class="dialogo__sub"></p>
+    <dl id="dialogo-datos" class="dialogo__datos"></dl>
+    <div id="dialogo-insignias" class="insignias"></div>
+  </dialog>
+
+  <!-- ============================ AVISO DE ACTUALIZACION ============================ -->
+  <div id="toast-actualizacion" class="toast" role="alert" hidden>
+    <span>Hay una versi&oacute;n nueva disponible.</span>
+    <button id="btn-recargar" class="boton boton--oro boton--pequeno" type="button">Recargar</button>
+  </div>
+
+  <!-- ============================ PIE ============================ -->
+  <footer class="pie">
+    <p class="pie__legal">
+      Ranking LAN no est&aacute; respaldado por Riot Games y no refleja las opiniones ni los puntos de vista
+      de Riot Games ni de nadie relacionado oficialmente con la producci&oacute;n o gesti&oacute;n de las
+      propiedades de Riot Games. Riot Games y todas las propiedades asociadas son marcas comerciales o
+      marcas registradas de Riot Games,&nbsp;Inc.
+    </p>
+    <p class="pie__meta">
+      Proyecto acad&eacute;mico UTEC · Aplicaciones Web Progresivas ·
+      datos v&iacute;a <a href="https://developer.riotgames.com/" rel="noopener noreferrer" target="_blank">Riot Games API</a>
+      (<code>league-v4</code> en <code>la1</code>)
+    </p>
+  </footer>
+
+  <script src="./js/registro-sw.js" defer></script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

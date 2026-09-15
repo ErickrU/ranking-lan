@@ -1,0 +1,18 @@
+{
+  "name": "ranking-lan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PWA con el ranking de los mejores jugadores de League of Legends en la region LAN (Latinoamerica Norte).",
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node servidor/proxy.mjs",
+    "dev": "node servidor/proxy.mjs --puerto 8080",
+    "datos": "node herramientas/generar-datos-demo.mjs",
+    "iconos": "bash herramientas/generar-iconos.sh"
+  },
+  "keywords": ["pwa", "service-worker", "league-of-legends", "riot-api", "lan", "utec"],
+  "license": "MIT"
+}

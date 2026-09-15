@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Ranking LAN">
+  <defs>
+    <linearGradient id="fondo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a1428"/>
+      <stop offset="0.55" stop-color="#0e2038"/>
+      <stop offset="1" stop-color="#04070d"/>
+    </linearGradient>
+    <radialGradient id="brillo" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#c8aa6e" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#c8aa6e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="oro" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0e6d2"/>
+      <stop offset="0.42" stop-color="#c8aa6e"/>
+      <stop offset="1" stop-color="#785a28"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#fondo)"/>
+  <rect width="512" height="512" fill="url(#brillo)"/>
+
+  <!-- Contenido dentro de la zona segura (circulo interior del 80%) -->
+  <g transform="translate(256 256) scale(0.68) translate(-256 -256)">
+    <path d="M148 296 L132 176 L206 240 L256 142 L306 240 L380 176 L364 296 Z"
+          fill="url(#oro)"/>
+    <rect x="146" y="306" width="220" height="38" rx="10" fill="url(#oro)"/>
+    <circle cx="132" cy="168" r="15" fill="#f0e6d2"/>
+    <circle cx="256" cy="132" r="17" fill="#f0e6d2"/>
+    <circle cx="380" cy="168" r="15" fill="#f0e6d2"/>
+    <text x="256" y="440" text-anchor="middle"
+          font-family="Trebuchet MS, Verdana, Helvetica, Arial, sans-serif"
+          font-size="104" font-weight="bold" letter-spacing="10"
+          fill="#f0e6d2">LAN</text>
+  </g>
+</svg>
