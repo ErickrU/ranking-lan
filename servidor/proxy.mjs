@@ -958,7 +958,17 @@ async function servirEstatico(rutaUrl, peticion, respuesta) {
    ========================================================================== */
 
 const servidor = createServer(async (peticion, respuesta) => {
-  const url = new URL(peticion.url, `http://${peticion.headers.host ?? 'localhost'}`);
+  // Ojo: "//riot.txt" como referencia relativa es una URL relativa a protocolo
+  // (el host seria "riot.txt" y la ruta "/"). Se colapsan las barras repetidas
+  // del path ANTES de interpretar la URL; la verificacion del portal de Riot
+  // pide exactamente https://dominio//riot.txt cuando la URL registrada
+  // termina en barra.
+  const crudo = peticion.url ?? '/';
+  const pregunta = crudo.indexOf('?');
+  const rutaColapsada =
+    (pregunta === -1 ? crudo : crudo.slice(0, pregunta)).replace(/\/{2,}/g, '/');
+  const consulta = pregunta === -1 ? '' : crudo.slice(pregunta);
+  const url = new URL(rutaColapsada + consulta, `http://${peticion.headers.host ?? 'localhost'}`);
 
   if (peticion.method !== 'GET' && peticion.method !== 'HEAD') {
     return json(respuesta, 405, { error: 'Solo se admiten GET y HEAD' });

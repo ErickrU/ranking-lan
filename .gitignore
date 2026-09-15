@@ -2,3 +2,7 @@
 node_modules/
 *.log
 .DS_Store
+
+# Verificación de URL del portal de Riot: se sirve en producción (va dentro
+# de la imagen de Docker) pero no se publica en el repositorio.
+riot.txt
