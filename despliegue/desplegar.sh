@@ -80,6 +80,22 @@ fi
 echo "Imagen para $PLATAFORMA (Fargate $ARQUITECTURA)"
 
 # ----------------------------------------------------------------------------
+# Docker debe estar vivo ANTES de tocar AWS: si el daemon esta apagado, docker
+# build falla y sin esta comprobacion el stack se "actualizaria" con la imagen
+# anterior, pareciendo un despliegue correcto.
+# ----------------------------------------------------------------------------
+if ! docker info >/dev/null 2>&1; then
+  if command -v colima >/dev/null 2>&1; then
+    echo "Docker no responde: arrancando colima..."
+    colima start >/dev/null 2>&1 || true
+  fi
+  docker info >/dev/null 2>&1 || {
+    echo "ERROR: el daemon de Docker no esta disponible (prueba: colima start)." >&2
+    exit 1
+  }
+fi
+
+# ----------------------------------------------------------------------------
 # ECR: crear el repositorio si no existe, construir y subir
 # ----------------------------------------------------------------------------
 aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" >/dev/null 2>&1 ||
