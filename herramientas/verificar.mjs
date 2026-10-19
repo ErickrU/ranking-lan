@@ -446,6 +446,171 @@ try {
   }
   await cdp.enviar('Emulation.clearDeviceMetricsOverride');
 
+  /* --- Controles de ventana ------------------------------------------- */
+  console.log('\nControles de ventana');
+
+  const controles = await cdp.evaluar(`(() => {
+    const botones = [...document.querySelectorAll('[data-control-ventana]')];
+    return {
+      cuantos: botones.length,
+      ids: botones.map(b => b.id),
+      todosAccesibles: botones.every(b => b.getAttribute('aria-label') && b.title && b.querySelector('svg')),
+      noDrag: botones.every(b => {
+        const cs = getComputedStyle(b);
+        return (cs.getPropertyValue('app-region') || cs.getPropertyValue('-webkit-app-region') || 'no-drag').trim() === 'no-drag';
+      }),
+      cabeceraDrag: (() => {
+        const cs = getComputedStyle(document.querySelector('.cabecera'));
+        return (cs.getPropertyValue('app-region') || cs.getPropertyValue('-webkit-app-region')).trim() === 'drag';
+      })(),
+    };
+  })()`);
+  comprobar('La barra de título tiene exactamente cinco controles',
+    controles.cuantos === 5, controles.ids.join(', '));
+  comprobar('Cada control tiene aria-label, title e icono', controles.todosAccesibles);
+  comprobar('Cabecera arrastrable y controles no-drag (WCO)',
+    controles.cabeceraDrag && controles.noDrag);
+
+  const tema = await cdp.evaluar(`(async () => {
+    const btn = document.getElementById('control-tema');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    btn.click();
+    await new Promise(r => setTimeout(r, 300));
+    const claro = {
+      tema: document.documentElement.dataset.tema,
+      pressed: btn.getAttribute('aria-pressed'),
+      meta: meta.content,
+      guardado: localStorage.getItem('ranking-lan:tema'),
+      fondoCuerpo: getComputedStyle(document.body).color,
+      anuncio: document.getElementById('estado-pwa').textContent,
+    };
+    btn.click();
+    await new Promise(r => setTimeout(r, 300));
+    return { claro, vuelta: document.documentElement.dataset.tema };
+  })()`);
+  comprobar('El tema claro se activa, persiste y actualiza theme-color',
+    tema.claro.tema === 'claro' && tema.claro.pressed === 'true' &&
+    tema.claro.guardado === 'claro' && tema.claro.meta === '#eef1f6',
+    `meta ${tema.claro.meta} · texto ${tema.claro.fondoCuerpo}`);
+  comprobar('El cambio de tema se anuncia a lectores de pantalla',
+    /tema claro/i.test(tema.claro.anuncio), tema.claro.anuncio);
+  comprobar('Y vuelve al tema oscuro', tema.vuelta === 'oscuro');
+
+  const ayuda = await cdp.evaluar(`(async () => {
+    const boton = document.getElementById('control-ayuda');
+    boton.focus();
+    boton.click();
+    await new Promise(r => setTimeout(r, 200));
+    const d = document.getElementById('dialogo-ayuda');
+    const r = { abierto: d.open, items: d.querySelectorAll('.ayuda__lista li').length,
+                focoEnCerrar: document.activeElement?.id === 'cerrar-ayuda' };
+    d.close();
+    await new Promise(r => setTimeout(r, 150));
+    r.focoVolvio = document.activeElement?.id === 'control-ayuda';
+    return r;
+  })()`);
+  comprobar('La ayuda abre como diálogo modal con el foco gestionado',
+    ayuda.abierto && ayuda.items === 5 && ayuda.focoEnCerrar && ayuda.focoVolvio,
+    `${ayuda.items} apartados · foco al cerrar: ${ayuda.focoEnCerrar} · devuelto: ${ayuda.focoVolvio}`);
+
+  const compartir = await cdp.evaluar(`(async () => {
+    // Sin navigator.share en headless: debe caer al portapapeles.
+    let copiado = null;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true,
+      value: { writeText: async (t) => { copiado = t; } } });
+    document.getElementById('control-compartir').click();
+    await new Promise(r => setTimeout(r, 300));
+    return { copiado, anuncio: document.getElementById('estado-pwa').textContent };
+  })()`);
+  comprobar('Compartir cae al portapapeles cuando no hay Web Share',
+    compartir.copiado === URL_APP || compartir.copiado?.startsWith(URL_APP),
+    compartir.anuncio);
+
+  const restablecer = await cdp.evaluar(`(async () => {
+    const region = document.getElementById('sel-region');
+    region.value = 'kr'; region.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('campo-buscar').value = 'xyz';
+    document.getElementById('campo-buscar').dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 400));
+    document.getElementById('control-restablecer').click();
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      if (document.getElementById('titulo-tabla').textContent.includes('LAN')
+          && document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length) break;
+    }
+    return {
+      region: document.getElementById('sel-region').value,
+      tier: document.getElementById('sel-tier').value,
+      busqueda: document.getElementById('campo-buscar').value,
+      titulo: document.getElementById('titulo-tabla').textContent,
+    };
+  })()`);
+  comprobar('Restablecer vuelve a LAN · Retador y limpia la búsqueda',
+    restablecer.region === 'la1' && restablecer.tier === 'CHALLENGER' && restablecer.busqueda === '',
+    restablecer.titulo);
+
+  // Chrome headless no expone navigator.windowControlsOverlay. Se inyecta una
+  // simulacion ANTES de que cargue el modulo (Page.addScriptToEvaluateOnNewDocument)
+  // para que registre su listener en el objeto simulado, y se recarga.
+  await cdp.enviar('Page.addScriptToEvaluateOnNewDocument', { source: `
+    (() => {
+      const overlay = new EventTarget();
+      overlay.visible = false;
+      overlay.rect = { x: 0, y: 0, width: 1100, height: 40 };
+      overlay.getTitlebarAreaRect = () => overlay.rect;
+      Object.defineProperty(navigator, 'windowControlsOverlay', { configurable: true, value: overlay });
+    })();
+  ` });
+  await cdp.enviar('Page.reload');
+  for (let i = 0; i < 60; i++) {
+    await espera(250);
+    try {
+      if (await cdp.evaluar(`document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length > 0 && document.body.dataset.wco !== undefined`)) break;
+    } catch { /* recargando */ }
+  }
+
+  const wco = await cdp.evaluar(`(async () => {
+    const overlay = navigator.windowControlsOverlay;
+    overlay.visible = true;
+    overlay.rect = { x: 0, y: 0, width: 1100, height: 40 };
+    overlay.dispatchEvent(new Event('geometrychange'));
+    await new Promise(r => setTimeout(r, 350));
+    const ancha = { visible: document.body.classList.contains('wco-visible'),
+                    angosta: document.body.classList.contains('wco-angosto'),
+                    fija: getComputedStyle(document.querySelector('.cabecera')).position };
+    overlay.rect = { x: 0, y: 0, width: 500, height: 40 };
+    overlay.dispatchEvent(new Event('geometrychange'));
+    await new Promise(r => setTimeout(r, 350));
+    const estrecha = { angosta: document.body.classList.contains('wco-angosto') };
+    overlay.visible = false;
+    overlay.dispatchEvent(new Event('geometrychange'));
+    await new Promise(r => setTimeout(r, 350));
+    return { ancha, estrecha, apagado: !document.body.classList.contains('wco-visible') };
+  })()`);
+  comprobar('Con WCO visible la barra se fija a la franja de título',
+    wco.ancha.visible && !wco.ancha.angosta && wco.ancha.fija === 'fixed',
+    `visible ${wco.ancha.visible} · position ${wco.ancha.fija}`);
+  comprobar('Con franja angosta baja a una fila propia', wco.estrecha.angosta);
+  comprobar('Al apagar la superposición vuelve a cabecera web', wco.apagado);
+
+  // Captura del modo WCO para revision visual.
+  await cdp.evaluar(`(async () => {
+    const o = navigator.windowControlsOverlay; o.visible = true;
+    o.rect = { x: 0, y: 0, width: 1100, height: 40 };
+    o.dispatchEvent(new Event('geometrychange'));
+    await new Promise(r => setTimeout(r, 400));
+  })()`);
+  await cdp.enviar('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await espera(300);
+  writeFileSync('/tmp/ranking-lan-wco.png',
+    Buffer.from((await cdp.enviar('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await cdp.evaluar(`(async () => {
+    const o = navigator.windowControlsOverlay; o.visible = false;
+    o.dispatchEvent(new Event('geometrychange'));
+    await new Promise(r => setTimeout(r, 400));
+  })()`);
+  await cdp.enviar('Emulation.clearDeviceMetricsOverride');
+
   /* --- Manifest -------------------------------------------------------- */
   console.log('\nPWA');
   const manifest = await cdp.evaluar(`(async () => {
@@ -485,9 +650,19 @@ try {
   // instalabilidad: origen seguro, manifest con nombre, iconos 192 y 512, start_url,
   // display standalone y un service worker con manejador de fetch. Que el boton
   // este visible es, por tanto, la mejor senal de que la PWA es instalable.
-  const instalable = await cdp.evaluar(`!document.getElementById('btn-instalar').hidden`);
+  // El boton de instalar ahora es permanente: la senal de instalabilidad es el
+  // anuncio que deja beforeinstallprompt en la region viva.
+  const instalable = await cdp.evaluar(`(async () => {
+    const anuncio = document.getElementById('estado-pwa').textContent;
+    if (/lista para instalarse|ready to install/i.test(anuncio)) return true;
+    // Puede haber sido sobrescrito por otro anuncio: pulsamos y vemos la respuesta.
+    document.getElementById('btn-instalar').click();
+    await new Promise(r => setTimeout(r, 400));
+    const tras = document.getElementById('estado-pwa').textContent;
+    return !/menú de tu navegador|browser menu/i.test(tras);
+  })()`);
   comprobar('Chrome la considera instalable (beforeinstallprompt)', instalable,
-    instalable ? 'botón de instalación visible' : 'el evento no se disparó');
+    instalable ? 'el evento de instalación llegó' : 'el evento no se disparó');
 
   comprobar('El texto de estado del SW se actualiza en la UI',
     !(await cdp.evaluar(`document.getElementById('estado-sw').textContent`)).includes('comprobando'),

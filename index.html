@@ -9,7 +9,7 @@
   <!-- PWA -->
   <link rel="manifest" href="./manifest.webmanifest">
   <meta name="theme-color" content="#0a1428">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
 
   <!-- Iconos -->
   <link rel="icon" href="./iconos/favicon.svg" type="image/svg+xml">
@@ -25,17 +25,51 @@
 <body>
   <a class="salto-contenido" href="#contenido">Saltar al contenido</a>
 
-  <!-- ============================ CABECERA ============================ -->
+  <!-- ============================ CABECERA ============================
+       Barra de titulo propia. Instalada con Window Controls Overlay ocupa la
+       franja del sistema (env(titlebar-area-*)); como pagina web normal es la
+       cabecera de siempre. La zona de marca arrastra la ventana; los controles
+       son no-drag para que sigan siendo pulsables. -->
   <header class="cabecera">
     <div class="cabecera__marca">
-      <img class="cabecera__logo" src="./iconos/favicon.svg" alt="" width="44" height="44">
-      <div>
+      <img class="cabecera__logo" src="./iconos/favicon.svg" alt="" width="40" height="40">
+      <div class="cabecera__texto">
         <h1 class="cabecera__titulo">Ranking&nbsp;LAN</h1>
         <p class="cabecera__sub" id="sub-cabecera">League of Legends</p>
       </div>
     </div>
 
-    <div class="cabecera__acciones">
+    <div class="cabecera__arrastre" aria-hidden="true"></div>
+
+    <nav class="cabecera__acciones" data-i18n-attr="aria-label:controles.aria" aria-label="Controles de la aplicaci&oacute;n">
+      <button id="btn-instalar" class="control-ventana" type="button" data-control-ventana
+              data-i18n-attr="aria-label:control.instalar,title:control.instalar" aria-label="Instalar aplicaci&oacute;n" title="Instalar aplicaci&oacute;n">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+        <span data-i18n="control.instalar.corto">Instalar</span>
+      </button>
+      <button id="control-compartir" class="control-ventana" type="button" data-control-ventana
+              data-i18n-attr="aria-label:control.compartir,title:control.compartir" aria-label="Compartir aplicaci&oacute;n" title="Compartir aplicaci&oacute;n">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5m-7.6 6.9 7.6 4.5"/></svg>
+        <span data-i18n="control.compartir.corto">Compartir</span>
+      </button>
+      <button id="control-tema" class="control-ventana" type="button" data-control-ventana aria-pressed="false"
+              data-i18n-attr="aria-label:control.tema,title:control.tema" aria-label="Cambiar tema" title="Cambiar tema">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 15.2A8 8 0 0 1 8.8 4 8 8 0 1 0 20 15.2Z"/></svg>
+        <span data-i18n="control.tema.corto">Tema</span>
+      </button>
+      <button id="control-restablecer" class="control-ventana" type="button" data-control-ventana
+              data-i18n-attr="aria-label:control.restablecer,title:control.restablecer" aria-label="Restablecer filtros" title="Restablecer filtros">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4v6h6M5.5 15a7 7 0 1 0 .4-7.5L4 10"/></svg>
+        <span data-i18n="control.restablecer.corto">Restablecer</span>
+      </button>
+      <button id="control-ayuda" class="control-ventana" type="button" data-control-ventana
+              data-i18n-attr="aria-label:control.ayuda,title:control.ayuda" aria-label="Abrir ayuda" title="Abrir ayuda">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9a2.3 2.3 0 1 1 3.7 1.8c-1 .7-1.5 1.2-1.5 2.2m0 3.5h.01"/></svg>
+        <span data-i18n="control.ayuda.corto">Ayuda</span>
+      </button>
+
+      <span class="cabecera__separador" aria-hidden="true"></span>
+
       <label class="selector-idioma">
         <span class="visualmente-oculto" data-i18n="idioma.etiqueta">Idioma</span>
         <select id="sel-idioma" data-i18n-attr="aria-label:idioma.etiqueta">
@@ -43,15 +77,15 @@
           <option value="en">EN</option>
         </select>
       </label>
-      <button id="btn-instalar" class="boton boton--fantasma" type="button" hidden>
-        <span aria-hidden="true">⬇</span> <span data-i18n="boton.instalar">Instalar app</span>
-      </button>
-      <button id="btn-actualizar" class="boton boton--oro" type="button">
+      <button id="btn-actualizar" class="boton boton--oro boton--pequeno" type="button">
         <span class="icono-refrescar" aria-hidden="true">⟳</span>
         <span data-i18n="boton.actualizar">Actualizar</span>
       </button>
-    </div>
+    </nav>
   </header>
+
+  <!-- Anuncios de los controles (compartir, tema, instalacion) para lectores de pantalla -->
+  <p id="estado-pwa" class="visualmente-oculto" role="status" aria-live="polite"></p>
 
   <!-- ============================ BARRA DE ESTADO ============================ -->
   <div class="estado" role="status" aria-live="polite">
@@ -309,6 +343,23 @@
     <dl id="dialogo-datos" class="dialogo__datos"></dl>
     <div id="dialogo-insignias" class="insignias"></div>
     <div id="dialogo-extra" class="dialogo__extra"></div>
+  </dialog>
+
+  <!-- ============================ AYUDA ============================ -->
+  <dialog id="dialogo-ayuda" class="dialogo dialogo--ayuda" aria-labelledby="ayuda-titulo">
+    <form method="dialog" class="dialogo__cerrar-form">
+      <button id="cerrar-ayuda" class="dialogo__cerrar" value="cerrar"
+              data-i18n-attr="aria-label:dialogo.cerrar" aria-label="Cerrar">×</button>
+    </form>
+    <h3 id="ayuda-titulo" class="dialogo__titulo" data-i18n="ayuda.titulo">C&oacute;mo usar Ranking LAN</h3>
+    <ul class="ayuda__lista">
+      <li><strong data-i18n="ayuda.i1.t">Ranking regional:</strong> <span data-i18n="ayuda.i1.d"></span></li>
+      <li><strong data-i18n="ayuda.i2.t">Mi grupo:</strong> <span data-i18n="ayuda.i2.d"></span></li>
+      <li><strong data-i18n="ayuda.i3.t">Detalle:</strong> <span data-i18n="ayuda.i3.d"></span></li>
+      <li><strong data-i18n="ayuda.i4.t">Sin conexi&oacute;n:</strong> <span data-i18n="ayuda.i4.d"></span></li>
+      <li><strong data-i18n="ayuda.i5.t">Controles:</strong> <span data-i18n="ayuda.i5.d"></span></li>
+    </ul>
+    <p class="ayuda__nota" data-i18n="ayuda.nota"></p>
   </dialog>
 
   <!-- ============================ AVISO DE ACTUALIZACION ============================ -->

@@ -361,6 +361,29 @@ addEventListener('idiomacambiado', () => {
   pintar();
 });
 
+/* Control "Restablecer" de la barra de titulo: vuelve a LAN · Retador · Solo/Duo
+   con orden por LP y sin busqueda. Si algo que exige red cambio, recarga. */
+addEventListener('restablecerfiltros', () => {
+  const porDefecto = { region: 'la1', cola: 'RANKED_SOLO_5x5', tier: 'CHALLENGER', division: 'I' };
+  const necesitaRecarga = Object.entries(porDefecto).some(([clave, valor]) => estado[clave] !== valor);
+
+  Object.assign(estado, porDefecto, { orden: 'lp-desc', busqueda: '' });
+  nodos.selRegion.value = estado.region;
+  nodos.selCola.value = estado.cola;
+  nodos.selTier.value = estado.tier;
+  nodos.selDivision.value = estado.division;
+  nodos.selOrden.value = estado.orden;
+  nodos.buscar.value = '';
+  guardarPreferencias();
+
+  if (necesitaRecarga) {
+    cargar();
+    dispatchEvent(new CustomEvent('regioncambiada', { detail: { region: estado.region } }));
+  } else {
+    pintar();
+  }
+});
+
 /* Al volver a la pestana, refrescamos si los datos ya tienen mas de 5 minutos. */
 const CADUCIDAD_MS = 5 * 60 * 1000;
 document.addEventListener('visibilitychange', () => {

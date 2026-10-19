@@ -31,9 +31,21 @@
   --borde: rgba(200, 170, 110, 0.22);
   --borde-fuerte: rgba(200, 170, 110, 0.45);
 
+  /* Superficies semanticas: el tema claro solo redefine estos tokens. */
+  --fondo-a: var(--azul-800);
+  --fondo-b: var(--azul-900);
+  --superficie: rgba(19, 39, 67, 0.55);
+  --superficie-2: var(--azul-700);
+  --superficie-suave: rgba(255, 255, 255, 0.04);
+  --cristal: rgba(4, 7, 13, 0.78);
+  --oro-tenue: rgba(200, 170, 110, 0.12);
+  --sobre-oro: var(--azul-800);      /* texto encima de botones dorados */
+  --halo-oro: rgba(200, 170, 110, 0.13);
+  --halo-cian: rgba(3, 151, 171, 0.10);
+
   /* Formas y espacios */
-  --radio: 12px;
-  --radio-sm: 8px;
+  --radio: 14px;
+  --radio-sm: 9px;
   --sombra: 0 10px 30px rgba(0, 0, 0, 0.45);
   --ancho-max: 1080px;
 
@@ -44,6 +56,54 @@
   color-scheme: dark;
 }
 
+/* ---- Tema claro: Hextech de dia. Misma paleta de oro, fondo marfil-azulado.
+       Los grises se oscurecen para conservar 4.5:1 sobre superficies claras. */
+html[data-tema="claro"] {
+  color-scheme: light;
+  --azul-900: #dfe5ee;
+  --azul-800: #eef1f6;
+  --azul-700: #ffffff;
+  --azul-600: #f6f8fb;
+  /* Contrastes medidos sobre el fondo marfil (#eef1f6), el peor caso. */
+  --oro-claro: #1a2433;             /* texto principal, 13.8:1 */
+  --oro: #7d5f22;                   /* acento dorado, 5.2:1 */
+  --oro-oscuro: #5e4718;
+  --gris: #4f5968;                  /* 6.3:1 */
+  --gris-tenue: #5c6775;            /* 5.0:1 */
+  --cian: #0a7282;                  /* 4.9:1 */
+  --verde: #1f7a46;                 /* 4.7:1 */
+  --rojo: #b43838;                  /* 5.2:1 */
+  --borde: rgba(125, 95, 34, 0.26);
+  --borde-fuerte: rgba(125, 95, 34, 0.5);
+  --superficie: rgba(255, 255, 255, 0.72);
+  --superficie-2: #ffffff;
+  --superficie-suave: rgba(26, 36, 51, 0.04);
+  --cristal: rgba(246, 248, 251, 0.8);
+  --oro-tenue: rgba(125, 95, 34, 0.1);
+  --sobre-oro: #ffffff;
+  --halo-oro: rgba(125, 95, 34, 0.12);
+  --halo-cian: rgba(11, 127, 144, 0.08);
+  --sombra: 0 12px 30px rgba(26, 36, 51, 0.12);
+}
+/* Los botones dorados invierten el gradiente en claro para mantener contraste. */
+html[data-tema="claro"] .boton--oro {
+  background: linear-gradient(180deg, #957130, #7d5f22);
+  color: #ffffff;
+}
+html[data-tema="claro"] .boton--oro:hover:not(:disabled) {
+  background: linear-gradient(180deg, #957130, #7d5f22);
+}
+html[data-tema="claro"] .pestana[aria-selected="true"],
+html[data-tema="claro"] .salto-contenido {
+  background: linear-gradient(180deg, #957130, #7d5f22);
+  color: #ffffff;
+}
+html[data-tema="claro"] .cabecera__titulo {
+  background: linear-gradient(180deg, #7d5f22, #5e4718);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -51,10 +111,11 @@ body {
   font-family: var(--fuente);
   color: var(--oro-claro);
   background:
-    radial-gradient(90% 55% at 50% -10%, rgba(200, 170, 110, 0.13), transparent 70%),
-    radial-gradient(70% 45% at 100% 100%, rgba(3, 151, 171, 0.10), transparent 65%),
-    linear-gradient(170deg, var(--azul-800) 0%, var(--azul-900) 100%);
+    radial-gradient(90% 55% at 50% -10%, var(--halo-oro), transparent 70%),
+    radial-gradient(70% 45% at 100% 100%, var(--halo-cian), transparent 65%),
+    linear-gradient(170deg, var(--fondo-a) 0%, var(--fondo-b) 100%);
   background-attachment: fixed;
+  transition: background-color 0.25s, color 0.25s;
   padding:
     env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -91,54 +152,193 @@ body {
 }
 
 /* ==========================================================================
-   CABECERA
+   CABECERA · barra de titulo propia
+   --------------------------------------------------------------------------
+   Como pagina web es una cabecera pegajosa de cristal con un filo dorado.
+   Instalada con Window Controls Overlay (body.wco-visible) se mueve a la
+   franja del sistema usando env(titlebar-area-*): la marca y el hueco central
+   arrastran la ventana, los controles no.
    ========================================================================== */
+:root {
+  --barra-alto: 64px;
+  --titlebar-x: env(titlebar-area-x, 0px);
+  --titlebar-y: env(titlebar-area-y, 0px);
+  --titlebar-width: env(titlebar-area-width, 100%);
+  --titlebar-height: env(titlebar-area-height, 64px);
+}
+
 .cabecera {
   position: sticky;
   top: 0;
   z-index: 20;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  min-height: var(--barra-alto);
   max-width: var(--ancho-max);
   margin-inline: auto;
-  padding: 14px 18px;
-  background: rgba(4, 7, 13, 0.82);
-  backdrop-filter: blur(10px);
+  padding: 8px 14px;
+  background: var(--cristal);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
   border-bottom: 1px solid var(--borde);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+/* Filo dorado: una linea de luz que se apaga hacia los extremos. */
+.cabecera::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--oro) 30%, var(--oro) 70%, transparent);
+  opacity: 0.55;
+  pointer-events: none;
 }
 
-.cabecera__marca { display: flex; align-items: center; gap: 12px; }
-.cabecera__logo { border-radius: 10px; flex: none; }
+.cabecera__marca { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; min-width: 0; }
+.cabecera__logo {
+  border-radius: 11px;
+  flex: none;
+  box-shadow: 0 0 0 1px var(--borde-fuerte), 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.cabecera__texto { min-width: 0; }
 
 .cabecera__titulo {
-  font-size: clamp(1.25rem, 4.5vw, 1.6rem);
+  font-size: clamp(1.1rem, 3.5vw, 1.35rem);
   font-weight: 700;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.6px;
+  line-height: 1.15;
+  white-space: nowrap;
   background: linear-gradient(180deg, var(--oro-claro), var(--oro));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-.cabecera__sub { font-size: 0.75rem; color: var(--gris); }
-.cabecera__sub code { font-family: var(--mono); font-size: 0.72rem; color: var(--cian); }
+.cabecera__sub {
+  font-size: 0.7rem;
+  color: var(--gris);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
-.cabecera__acciones { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Hueco central: el area de arrastre de la ventana en modo WCO. */
+.cabecera__arrastre { flex: 1 1 auto; min-width: 8px; align-self: stretch; }
+
+.cabecera__acciones {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.cabecera__separador {
+  width: 1px;
+  height: 26px;
+  margin-inline: 8px 6px;
+  background: var(--borde-fuerte);
+}
+
+/* Controles de ventana: iconograficos, 44px de objetivo tactil ----------- */
+.control-ventana {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radio-sm);
+  background: transparent;
+  color: var(--gris);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s, transform 0.12s;
+}
+.control-ventana:hover,
+.control-ventana[aria-pressed="true"] {
+  color: var(--oro-claro);
+  background: var(--oro-tenue);
+  border-color: var(--borde-fuerte);
+}
+.control-ventana:active { transform: translateY(1px); }
+.control-ventana:disabled { opacity: 0.5; cursor: progress; }
+.control-ventana svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.control-ventana[data-instalada="si"] { color: var(--verde); }
 
 /* Selector de idioma: compacto, junto a las acciones. */
 .selector-idioma select {
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 700;
-  padding: 8px 10px;
+  padding: 8px 9px;
   color: var(--oro-claro);
-  background: var(--azul-700);
+  background: var(--superficie-2);
   border: 1px solid var(--borde);
   border-radius: var(--radio-sm);
   cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* ---- Modo Window Controls Overlay (PWA instalada en escritorio) --------- */
+.wco-visible .cabecera {
+  position: fixed;
+  z-index: 40;
+  top: var(--titlebar-y);
+  left: var(--titlebar-x);
+  width: var(--titlebar-width);
+  max-width: none;
+  height: var(--titlebar-height);
+  min-height: var(--titlebar-height);
+  padding: 2px 8px;
+  border-bottom-color: var(--borde);
+}
+.wco-visible .cabecera__logo { width: 28px; height: 28px; border-radius: 8px; }
+.wco-visible .cabecera__titulo { font-size: 0.92rem; letter-spacing: 1.2px; }
+.wco-visible .cabecera__sub { display: none; }
+.wco-visible .control-ventana { min-height: 30px; padding-block: 3px; }
+.wco-visible .control-ventana span { display: none; }
+.wco-visible .selector-idioma select,
+.wco-visible .boton--pequeno { padding-block: 4px; }
+/* El contenido empieza debajo de la franja de titulo. */
+.wco-visible .estado { margin-top: calc(var(--titlebar-y) + var(--titlebar-height) + 10px); }
+
+/* Franja angosta (ventana estrecha o muchos controles del sistema): la barra
+   baja a una fila propia debajo de la franja para no solaparse. */
+.wco-angosto .cabecera {
+  top: calc(var(--titlebar-y) + var(--titlebar-height));
+  left: 0;
+  width: 100%;
+  height: var(--barra-alto);
+  min-height: var(--barra-alto);
+  padding: 8px 14px;
+}
+.wco-angosto .cabecera__logo { width: 36px; height: 36px; }
+.wco-angosto .cabecera__titulo { font-size: 1.05rem; }
+.wco-angosto .control-ventana { min-height: 44px; padding-block: 8px; }
+.wco-angosto .estado {
+  margin-top: calc(var(--titlebar-y) + var(--titlebar-height) + var(--barra-alto) + 10px);
 }
 
 /* Nota de nombres pendientes de resolver (limite de la API). */
@@ -179,7 +379,7 @@ body {
 
 .boton--oro {
   background: linear-gradient(180deg, var(--oro-claro), var(--oro));
-  color: var(--azul-800);
+  color: var(--sobre-oro);
   border-color: var(--oro);
 }
 .boton--oro:hover:not(:disabled) { filter: brightness(1.08); background: linear-gradient(180deg, var(--oro-claro), var(--oro)); }
@@ -214,7 +414,7 @@ body {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--borde);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--superficie-suave);
   font-weight: 700;
   letter-spacing: 0.3px;
 }
@@ -239,11 +439,12 @@ body {
   font-size: 0.8rem;
   line-height: 1.55;
   color: var(--oro-claro);
-  background: rgba(200, 170, 110, 0.1);
+  background: var(--oro-tenue);
   border: 1px solid var(--borde-fuerte);
-  border-left-width: 4px;
+  border-left: 4px solid var(--oro);
   border-radius: var(--radio-sm);
 }
+.aviso strong { color: var(--oro); }
 .aviso code { font-family: var(--mono); font-size: 0.75rem; color: var(--oro); }
 
 /* ==========================================================================
@@ -258,11 +459,23 @@ body {
 }
 
 .panel {
-  background: linear-gradient(180deg, rgba(19, 39, 67, 0.55), rgba(10, 20, 40, 0.55));
+  position: relative;
+  background: var(--superficie);
   border: 1px solid var(--borde);
   border-radius: var(--radio);
-  padding: 16px;
+  padding: 18px;
   box-shadow: var(--sombra);
+  backdrop-filter: blur(6px);
+}
+/* Brillo superior sutil, como un bisel de cristal. */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: var(--radio) var(--radio) 0 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+  pointer-events: none;
 }
 
 .panel__cabecera {
@@ -346,19 +559,33 @@ body {
 }
 
 .metrica {
+  position: relative;
   display: grid;
-  gap: 2px;
-  padding: 12px;
+  gap: 3px;
+  padding: 14px 12px 12px;
   text-align: center;
-  background: rgba(19, 39, 67, 0.5);
+  background: var(--superficie);
   border: 1px solid var(--borde);
   border-radius: var(--radio-sm);
+  overflow: hidden;
+  transition: border-color 0.18s, transform 0.18s;
 }
+/* Acento dorado en el borde superior de cada metrica. */
+.metrica::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--oro), transparent);
+  opacity: 0.7;
+}
+.metrica:hover { border-color: var(--borde-fuerte); transform: translateY(-1px); }
 .metrica__valor {
-  font-size: clamp(1.15rem, 5vw, 1.5rem);
+  font-size: clamp(1.25rem, 5vw, 1.65rem);
   font-weight: 700;
   color: var(--oro);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
 }
 .metrica__etiqueta {
   font-size: 0.68rem;
@@ -374,24 +601,48 @@ body {
 .podio:empty { display: none; }
 
 .podio__tarjeta {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 12px;
-  padding: 13px 15px;
+  padding: 14px 16px;
   border: 1px solid var(--borde);
   border-radius: var(--radio);
-  background: linear-gradient(100deg, rgba(200, 170, 110, 0.14), rgba(19, 39, 67, 0.5) 60%);
+  background: linear-gradient(100deg, var(--oro-tenue), var(--superficie) 60%);
   text-align: left;
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: transform 0.18s, border-color 0.18s;
+  overflow: hidden;
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
 }
-.podio__tarjeta:hover { transform: translateY(-2px); border-color: var(--borde-fuerte); }
-.podio__tarjeta[data-puesto="1"] { border-color: var(--oro); box-shadow: 0 0 0 1px rgba(200,170,110,.3), var(--sombra); }
+.podio__tarjeta:hover { transform: translateY(-2px); border-color: var(--borde-fuerte); box-shadow: var(--sombra); }
+/* Numero de puesto grande y tenue, como marca de agua. */
+.podio__tarjeta::after {
+  content: attr(data-puesto);
+  position: absolute;
+  right: 10px; bottom: -14px;
+  font-size: 4.2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--oro);
+  opacity: 0.07;
+  pointer-events: none;
+}
+.podio__tarjeta[data-puesto="1"] {
+  border-color: var(--oro);
+  box-shadow: 0 0 0 1px var(--borde-fuerte), 0 0 28px var(--halo-oro), var(--sombra);
+}
+.podio__tarjeta[data-puesto="1"]::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--oro), transparent);
+}
 
-.podio__medalla { font-size: 1.9rem; line-height: 1; flex: none; }
+.podio__medalla { font-size: 1.9rem; line-height: 1; flex: none; filter: drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
 .podio__nombre {
   font-weight: 700;
   font-size: 0.98rem;
@@ -579,6 +830,18 @@ body {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
 }
 .dialogo::backdrop { background: rgba(4, 7, 13, 0.72); backdrop-filter: blur(3px); }
+html[data-tema="claro"] .dialogo::backdrop { background: rgba(26, 36, 51, 0.45); }
+
+/* Dialogo de ayuda ------------------------------------------------------- */
+.ayuda__lista { display: grid; gap: 12px; margin: 16px 0 0 18px; font-size: 0.86rem; line-height: 1.55; color: var(--gris); }
+.ayuda__lista strong { color: var(--oro-claro); }
+.ayuda__nota {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--borde);
+  font-size: 0.78rem;
+  color: var(--gris-tenue);
+}
 
 .dialogo__cerrar-form { float: right; margin: -6px -6px 0 0; }
 .dialogo__cerrar {
@@ -637,7 +900,7 @@ body {
   gap: 10px;
   padding: 8px 10px;
   border-radius: var(--radio-sm);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--superficie-suave);
   border-left: 3px solid var(--gris-tenue);
   font-size: 0.8rem;
 }
@@ -735,17 +998,18 @@ body {
   letter-spacing: 0.4px;
   padding: 11px 14px;
   color: var(--gris);
-  background: rgba(19, 39, 67, 0.5);
+  background: var(--superficie);
   border: 1px solid var(--borde);
   border-radius: var(--radio-sm);
   cursor: pointer;
-  transition: color 0.18s, background-color 0.18s;
+  transition: color 0.18s, background-color 0.18s, box-shadow 0.18s;
 }
-.pestana:hover { color: var(--oro-claro); }
+.pestana:hover { color: var(--oro-claro); border-color: var(--borde-fuerte); }
 .pestana[aria-selected="true"] {
-  color: var(--azul-800);
+  color: var(--sobre-oro);
   background: linear-gradient(180deg, var(--oro-claro), var(--oro));
   border-color: var(--oro);
+  box-shadow: 0 6px 18px var(--halo-oro);
 }
 
 /* ==========================================================================
@@ -874,7 +1138,39 @@ body {
   .podio__tarjeta:hover { transform: none; }
 }
 
-/* Modo instalado (standalone): un poco menos de aire arriba ------------- */
+/* Barra de titulo: progresion responsive ------------------------------- */
+/* Tablet: los controles pierden la etiqueta y quedan solo con icono. */
+@media (max-width: 900px) {
+  .control-ventana span { display: none; }
+  .control-ventana { width: 42px; min-width: 42px; padding-inline: 0; }
+  .cabecera__separador { margin-inline: 4px 2px; }
+}
+/* Movil: el subtitulo se va; el boton Actualizar se queda solo con el icono. */
+@media (max-width: 600px) {
+  :root { --barra-alto: 58px; }
+  .cabecera { gap: 6px; padding-inline: 10px; }
+  .cabecera__sub { display: none; }
+  .cabecera__logo { width: 34px; height: 34px; }
+  .cabecera__arrastre { min-width: 0; }
+  .cabecera__acciones { flex-wrap: nowrap; }
+  .cabecera__separador { margin-inline: 2px; }
+  /* El select de idioma y Actualizar no deben encogerse ni recortarse. */
+  .selector-idioma, #btn-actualizar { flex: none; }
+  .selector-idioma select { padding: 8px 6px; }
+  #btn-actualizar span:not(.icono-refrescar) { display: none; }
+  #btn-actualizar { padding-inline: 10px; min-height: 42px; }
+}
+/* Movil estrecho: el titulo cede y los controles se aprietan a 36px (la
+   altura sigue en 44px para conservar el objetivo tactil). */
+@media (max-width: 430px) {
+  .cabecera__texto { display: none; }
+  .cabecera__acciones { gap: 0; }
+  .control-ventana { width: 36px; min-width: 36px; }
+  .cabecera__separador { display: none; }
+}
+
+/* Modo instalado sin WCO (movil, o escritorio con la superposicion apagada):
+   un poco de aire extra bajo la barra de estado del sistema. */
 @media (display-mode: standalone) {
-  .cabecera { padding-top: 18px; }
+  body:not(.wco-visible) .cabecera { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
 }

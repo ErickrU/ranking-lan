@@ -632,6 +632,21 @@ export function iniciarGrupo(parametros = new URLSearchParams()) {
   // Cambio de idioma: solo repintar (las cadenas salen de t()).
   addEventListener('idiomacambiado', () => render());
 
+  // "Restablecer" de la barra de titulo: limpia el formulario de alta y vuelve
+  // a Solo/Duo. Los integrantes NO se tocan: borrar el grupo es destructivo y
+  // tiene su propio boton por fila.
+  addEventListener('restablecerfiltros', () => {
+    nodos.campoNombre.value = '';
+    nodos.campoTag.value = '';
+    avisar('');
+    if (estado.cola !== 'RANKED_SOLO_5x5') {
+      estado.cola = 'RANKED_SOLO_5x5';
+      nodos.selCola.value = estado.cola;
+      guardar();
+      render();
+    }
+  });
+
   render();
   if (estado.miembros.length > 0) cargarTodos();
 

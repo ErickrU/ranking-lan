@@ -234,11 +234,33 @@ npm run iconos     # regenera los PNG desde los SVG
 | Service worker con precache del app shell | `sw.js` → `PRECACHE` |
 | Funciona offline | Caché del shell + última clasificación descargada |
 | Instalable con botón propio | `beforeinstallprompt` en `js/registro-sw.js` |
+| Barra de título propia (Window Controls Overlay) | `display_override` en el manifest; `env(titlebar-area-*)`, zonas `drag`/`no-drag` y `geometrychange` en `css/estilos.css` + `js/registro-sw.js` |
+| Cinco controles de ventana: instalar, compartir, tema, restablecer, ayuda | `[data-control-ventana]` en `index.html`, lógica en `js/registro-sw.js` |
+| Tema claro / oscuro persistente | `html[data-tema]` con tokens semánticos; contraste AA verificado en ambos |
 | Aviso de versión nueva sin recargas sorpresa | `SALTAR_ESPERA` + `controllerchange` con guarda |
 | Compartir el grupo con un enlace | Web Share API con respaldo de portapapeles (`js/amigos.js`) |
 | Responsiva y con `safe-area` | `css/estilos.css` |
 | Accesible | HTML semántico, `aria-live`, foco visible, `prefers-reduced-motion` |
 | Origen seguro | `localhost` en desarrollo, HTTPS en producción |
+
+### Barra de título y controles de ventana
+
+La cabecera es una barra de título propia con cinco controles (instalar, compartir, tema,
+restablecer, ayuda), el selector de idioma y Actualizar. Como página web es una cabecera
+pegajosa; instalada en escritorio con **Window Controls Overlay**, se coloca en la franja
+del sistema usando `env(titlebar-area-x/y/width/height)`: la marca y el hueco central
+arrastran la ventana (`app-region: drag`) y los controles son `no-drag`. Si la franja es
+angosta (< 760 px), la barra baja a una fila propia para no solaparse con los botones del
+sistema. `geometrychange` se agrupa con 200 ms de espera.
+
+- **Compartir**: Web Share API y, si no existe o falla, copia del enlace al portapapeles.
+- **Tema**: claro/oscuro con `html[data-tema]` y `localStorage`; también actualiza
+  `theme-color`. El tema claro redefine solo tokens semánticos y todos sus tonos superan
+  4.5:1 (WCAG AA) sobre el fondo marfil, el peor caso.
+- **Restablecer**: evento `restablecerfiltros` que la vista regional interpreta como volver
+  a LAN · Retador · Solo/Dúo sin búsqueda, y Mi grupo como limpiar el formulario (nunca
+  borra integrantes).
+- Cada acción se anuncia en una región `role="status"` para lectores de pantalla.
 
 ### Estrategias de caché
 
