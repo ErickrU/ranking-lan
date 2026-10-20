@@ -507,17 +507,13 @@ export async function versionDataDragon() {
   return versionDdragon;
 }
 
-/** Indice championId -> nombre, para la maestria (la API solo da ids). */
+/** Indice championId -> { id, nombre }, para la maestria (la API solo da ids).
+    Reutiliza el catalogo completo: una sola descarga para toda la app. */
 export async function indiceDeCampeones() {
   if (indiceCampeones) return indiceCampeones;
   try {
-    const v = await versionDataDragon();
-    const r = await fetchConLimite(`${DDRAGON}/cdn/${v}/data/${localeActual() === 'es-MX' ? 'es_MX' : 'en_US'}/champion.json`, 8000);
-    const datos = await r.json();
-    indiceCampeones = new Map();
-    for (const c of Object.values(datos.data)) {
-      indiceCampeones.set(Number(c.key), { id: c.id, nombre: c.name });
-    }
+    const { campeones } = await catalogoDataDragon();
+    indiceCampeones = new Map(campeones.map((c) => [c.id, { id: c.idInterno, nombre: c.nombre }]));
   } catch {
     indiceCampeones = new Map();
   }
@@ -531,6 +527,120 @@ export const urlRetratoCampeon = (idInterno, version) =>
 /** URL del icono de perfil de invocador. */
 export const urlIconoPerfil = (iconoId, version) =>
   `${DDRAGON}/cdn/${version}/img/profileicon/${iconoId}.png`;
+
+/** Splash recortado (loading) de un campeon: fondo de la ficha de builds. */
+export const urlSplashCampeon = (idInterno) =>
+  `${DDRAGON}/cdn/img/champion/loading/${encodeURIComponent(idInterno)}_0.jpg`;
+
+export const urlItem = (id, version) => `${DDRAGON}/cdn/${version}/img/item/${id}.png`;
+export const urlHechizo = (idInterno, version) => `${DDRAGON}/cdn/${version}/img/spell/${encodeURIComponent(idInterno)}.png`;
+export const urlRuna = (rutaIcono) => `${DDRAGON}/cdn/img/${rutaIcono}`;
+
+/* ------------------------------------------------------------------ *
+ * Catalogo estatico: campeones, items, runas y hechizos (Data Dragon)
+ * Se descarga una vez por sesion y por idioma; el SW lo deja en cache.
+ * ------------------------------------------------------------------ */
+
+const catalogos = new Map(); // `${locale}` -> Promise<catalogo>
+
+const localeDdragon = () => (localeActual() === 'es-MX' ? 'es_MX' : 'en_US');
+
+/**
+ * Devuelve { version, campeones[], campeonPorId, items, runas, hechizos }.
+ * - campeones: lista ordenada por nombre con { id (numerico), idInterno, nombre, titulo, tags[] }
+ * - items: Map(id -> { nombre, oro, tags[], consumible, descripcion })
+ * - runas: Map(id -> { nombre, icono, arbol, arbolNombre }) incluye los arboles (styles)
+ * - hechizos: Map(key -> { nombre, idInterno })
+ */
+export function catalogoDataDragon() {
+  const clave = localeDdragon();
+  if (catalogos.has(clave)) return catalogos.get(clave);
+
+  const promesa = (async () => {
+    const version = await versionDataDragon();
+    const base = `${DDRAGON}/cdn/${version}/data/${clave}`;
+    const leer = (archivo) => fetchConLimite(`${base}/${archivo}`, 12_000).then((r) => r.json());
+
+    const [campeonesJson, itemsJson, runasJson, hechizosJson] = await Promise.all([
+      leer('champion.json'), leer('item.json'), leer('runesReforged.json'), leer('summoner.json'),
+    ]);
+
+    const campeones = Object.values(campeonesJson.data)
+      .map((c) => ({ id: Number(c.key), idInterno: c.id, nombre: c.name, titulo: c.title, tags: c.tags ?? [] }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, localeActual()));
+    const campeonPorId = new Map(campeones.map((c) => [c.id, c]));
+
+    const items = new Map();
+    for (const [id, it] of Object.entries(itemsJson.data)) {
+      items.set(Number(id), {
+        nombre: it.name,
+        oro: it.gold?.total ?? 0,
+        tags: it.tags ?? [],
+        consumible: Boolean(it.consumed) || (it.tags ?? []).includes('Consumable') || (it.tags ?? []).includes('Trinket'),
+        descripcion: (it.plaintext || '').trim(),
+      });
+    }
+
+    const runas = new Map();
+    for (const arbol of runasJson) {
+      runas.set(arbol.id, { nombre: arbol.name, icono: arbol.icon, arbol: arbol.id, arbolNombre: arbol.name, esArbol: true });
+      for (const slot of arbol.slots) {
+        for (const r of slot.runes) {
+          runas.set(r.id, { nombre: r.name, icono: r.icon, arbol: arbol.id, arbolNombre: arbol.name, esArbol: false });
+        }
+      }
+    }
+
+    const hechizos = new Map();
+    for (const h of Object.values(hechizosJson.data)) {
+      hechizos.set(Number(h.key), { nombre: h.name, idInterno: h.id });
+    }
+
+    return { version, campeones, campeonPorId, items, runas, hechizos };
+  })();
+
+  // Si falla, no se queda cacheada la promesa rota: el proximo intento reintenta.
+  promesa.catch(() => catalogos.delete(clave));
+  catalogos.set(clave, promesa);
+  return promesa;
+}
+
+/* ------------------------------------------------------------------ *
+ * Builds de un campeon (agregado del proxy)
+ * ------------------------------------------------------------------ */
+
+export async function obtenerBuild({ campeonId, region = 'la1', omitirRed = false }) {
+  const url = `./api/campeon?${new URLSearchParams({ id: campeonId, region })}`;
+  const problemas = [];
+
+  if (!omitirRed) {
+    try {
+      const respuesta = await fetchConLimite(url, 25_000); // puede enriquecer bajo demanda
+      if (!respuesta.ok) throw new ErrorDatos(`El proxy respondió ${respuesta.status}`, respuesta.status);
+      const servidaDeCache = respuesta.headers.get('X-Ranking-Origen') === 'cache';
+      if (!servidaDeCache) {
+        const cache = await abrirCache();
+        if (cache) { try { await cache.put(url, respuesta.clone()); } catch { /* sin espacio */ } }
+      }
+      const documento = await respuesta.json();
+      let fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.VIVO;
+      if (servidaDeCache && fuente !== FUENTE.DEMO) fuente = FUENTE.CACHE;
+      return { fuente, aviso: documento.aviso ?? null, muestraTotal: documento.muestraTotal ?? null, build: documento.build ?? null };
+    } catch (error) {
+      problemas.push(error.message);
+    }
+  }
+
+  const cache = await abrirCache();
+  const guardada = cache && (await cache.match(url));
+  if (guardada) {
+    const documento = await guardada.json();
+    const fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.CACHE;
+    return { fuente, aviso: documento.aviso ?? null, muestraTotal: documento.muestraTotal ?? null, build: documento.build ?? null };
+  }
+
+  throw new ErrorDatos(problemas[0] ?? 'Sin conexión y sin build guardada');
+}
 
 /* ------------------------------------------------------------------ *
  * Orden de rangos

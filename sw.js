@@ -13,7 +13,7 @@
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
 const CACHE_DDRAGON = 'ranking-lan-ddragon-v1'; // retratos e indice de campeones
@@ -32,6 +32,7 @@ const PRECACHE = [
   './js/registro-sw.js',
   './js/amigos.js',
   './js/i18n.js',
+  './js/campeones.js',
   './datos/ranking-lan.json',
   './iconos/favicon.svg',
   './iconos/icono-192.png',

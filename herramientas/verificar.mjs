@@ -656,6 +656,94 @@ try {
   })()`);
   await cdp.enviar('Emulation.clearDeviceMetricsOverride');
 
+  /* --- Campeones y builds ---------------------------------------------- */
+  console.log('\nCampeones y builds');
+
+  const catalogo = await cdp.evaluar(`(async () => {
+    document.getElementById('tab-campeones').click();
+    for (let i = 0; i < 80; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      if (document.querySelectorAll('#cat-rejilla .cat-tarjeta').length > 100) break;
+    }
+    return {
+      visible: !document.getElementById('vista-campeones').hidden,
+      tarjetas: document.querySelectorAll('#cat-rejilla .cat-tarjeta').length,
+      nota: document.getElementById('cat-nota').textContent,
+      chips: document.querySelectorAll('#cat-clases .cat-chip').length,
+    };
+  })()`);
+  comprobar('La pestaña Campeones carga el catálogo de Data Dragon',
+    catalogo.visible && catalogo.tarjetas >= 150 && catalogo.chips === 7,
+    `${catalogo.tarjetas} campeones · ${catalogo.nota}`);
+
+  const filtro = await cdp.evaluar(`(async () => {
+    const campo = document.getElementById('cat-buscar');
+    campo.value = 'ahri'; campo.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 350));
+    const porNombre = document.querySelectorAll('#cat-rejilla .cat-tarjeta').length;
+    campo.value = ''; campo.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#cat-clases [data-clase="Tank"]').click();
+    await new Promise(r => setTimeout(r, 350));
+    const tanques = document.querySelectorAll('#cat-rejilla .cat-tarjeta').length;
+    document.querySelector('#cat-clases [data-clase=""]').click();
+    await new Promise(r => setTimeout(r, 200));
+    return { porNombre, tanques, total: document.querySelectorAll('#cat-rejilla .cat-tarjeta').length };
+  })()`);
+  comprobar('Búsqueda por nombre y filtro por clase funcionan',
+    filtro.porNombre === 1 && filtro.tanques > 10 && filtro.tanques < filtro.total,
+    `"ahri" -> ${filtro.porNombre} · tanques -> ${filtro.tanques} de ${filtro.total}`);
+
+  const build = await cdp.evaluar(`(async () => {
+    const ahri = [...document.querySelectorAll('#cat-rejilla .cat-tarjeta')].find(t => t.dataset.id === '103');
+    ahri.click();
+    for (let i = 0; i < 80; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      if (document.querySelectorAll('#dialogo-extra .build__conjunto .item').length > 0) break;
+    }
+    const q = (s) => document.querySelectorAll(s).length;
+    const d = document.getElementById('dialogo');
+    const r = {
+      abierto: d.open,
+      titulo: document.getElementById('dialogo-titulo').textContent,
+      conjunto: q('#dialogo-extra .build__conjunto .item'),
+      items: q('#dialogo-extra .build__item'),
+      runas: q('#dialogo-extra .build__runa'),
+      hechizos: q('#dialogo-extra .build__hechizo .hechizo'),
+      stats: q('#dialogo-extra .build__stats .perfil__stat'),
+      conSplash: !!d.dataset.campeon && getComputedStyle(d).backgroundImage.includes('loading'),
+      nombresResueltos: [...document.querySelectorAll('#dialogo-extra .build__item strong')].every(s => !/^#\\d+$/.test(s.textContent)),
+      imagenesItems: [...document.querySelectorAll('#dialogo-extra .build__conjunto .item img')].length,
+    };
+    d.close();
+    return r;
+  })()`);
+  comprobar('La ficha de build abre con conjunto final, objetos, runas y hechizos',
+    build.abierto && build.titulo === 'Ahri' && build.conjunto >= 4 && build.items >= 3 && build.runas >= 1 && build.hechizos >= 2,
+    `${build.conjunto} items finales · ${build.items} objetos · ${build.runas} runas · ${build.hechizos} hechizos`);
+  comprobar('Los objetos se resuelven con nombre e imagen de Data Dragon y la ficha lleva el splash',
+    build.nombresResueltos && build.imagenesItems >= 4 && build.stats >= 2 && build.conSplash,
+    `${build.imagenesItems} imágenes · ${build.stats} stats`);
+
+  const historialBuild = await cdp.evaluar(`(async () => {
+    document.getElementById('tab-grupo').click();
+    await new Promise(r => setTimeout(r, 300));
+    document.querySelector('#grupo-cuerpo tr').click();
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      if (document.querySelectorAll('#dialogo-extra .build-partida').length > 0) break;
+    }
+    const r = {
+      partidasConBuild: document.querySelectorAll('#dialogo-extra .build-partida').length,
+      itemsPrimera: document.querySelectorAll('#dialogo-extra .build-partida .item img').length,
+    };
+    document.getElementById('dialogo').close();
+    document.getElementById('tab-global').click();
+    return r;
+  })()`);
+  comprobar('Cada partida del historial del grupo muestra su build (items, hechizos, runa)',
+    historialBuild.partidasConBuild >= 5 && historialBuild.itemsPrimera >= 10,
+    `${historialBuild.partidasConBuild} partidas con build · ${historialBuild.itemsPrimera} iconos de objeto`);
+
   /* --- Manifest -------------------------------------------------------- */
   console.log('\nPWA');
   const manifest = await cdp.evaluar(`(async () => {
@@ -668,7 +756,7 @@ try {
   comprobar('manifest.webmanifest es JSON válido', manifest.ok, manifest.nombre);
   comprobar('display: standalone', manifest.display === 'standalone');
   comprobar('Incluye icono maskable', manifest.maskable, `${manifest.iconos} iconos`);
-  comprobar('Declara atajos (shortcuts)', manifest.atajos > 0, `${manifest.atajos}`);
+  comprobar('Declara atajos (shortcuts)', manifest.atajos >= 5, `${manifest.atajos}`);
 
   const sw = await cdp.evaluar(`(async () => {
     const r = await navigator.serviceWorker.getRegistration();

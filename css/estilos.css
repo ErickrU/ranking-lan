@@ -1281,6 +1281,119 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
   clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
 }
 
+/* ==========================================================================
+   CAMPEONES: catalogo y ficha de build
+   ========================================================================== */
+.retrato--lg { width: 56px; height: 56px; font-size: 1.1rem; }
+.retrato--xl { width: 84px; height: 84px; font-size: 1.6rem; border-color: var(--linea-fuerte); box-shadow: var(--brillo-cian); }
+
+.cat-controles { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px; }
+.control__etiqueta {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+.cat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-chip {
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  color: var(--texto-2);
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea);
+  cursor: pointer;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.cat-chip:hover { color: var(--texto); border-color: var(--linea-fuerte); }
+.cat-chip[aria-pressed="true"] { color: var(--sobre-primario); background: var(--cian); border-color: var(--cian); }
+
+.cat-rejilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.cat-tarjeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.cat-tarjeta:hover { border-color: var(--cian); box-shadow: var(--brillo-cian); transform: translateY(-2px); }
+.cat-tarjeta__texto { display: grid; min-width: 0; }
+.cat-tarjeta__nombre { font-size: 0.86rem; letter-spacing: 0.02em; }
+.cat-tarjeta__titulo { font-size: 0.66rem; color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* El dialogo de build lleva el splash del campeon como fondo tenue. */
+.dialogo[data-campeon] { background-image: linear-gradient(180deg, rgba(5,7,13,.55), var(--superficie-2) 42%), var(--splash); background-size: cover; background-position: top center; }
+
+.build__cab { display: flex; align-items: center; gap: 16px; border-top: 0; padding-top: 0; }
+.build__stats { flex: 1; }
+.build__muestra { font-family: var(--mono); font-size: 0.72rem; color: var(--texto-3); }
+.build__muestra--corta { color: var(--ambar); }
+.build__vacio { color: var(--texto-2); font-size: 0.84rem; line-height: 1.55; padding: 12px 0; }
+.build__meta { font-family: var(--mono); font-size: 0.7rem; color: var(--texto-2); }
+
+/* Iconos de objetos, runas y hechizos ------------------------------------- */
+.item, .hechizo, .runa {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea);
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--texto-3);
+}
+.item { width: 36px; height: 36px; }
+.item img, .hechizo img, .runa img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.item--sm { width: 26px; height: 26px; }
+.item--vacio { background: repeating-linear-gradient(45deg, transparent 0 4px, var(--linea) 4px 5px); border-style: dashed; }
+.item--guardian { margin-left: 4px; border-color: var(--ambar); }
+.hechizo { width: 30px; height: 30px; }
+.hechizo--sm { width: 22px; height: 22px; }
+.runa { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle, var(--superficie-2), var(--superficie-suave)); }
+.runa--sm { width: 24px; height: 24px; }
+.runa--lg { width: 44px; height: 44px; border-color: var(--linea-fuerte); }
+.runa--arbol { width: 26px; height: 26px; opacity: 0.8; }
+
+.build__conjunto { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.build__conjunto .item { width: 44px; height: 44px; border-color: var(--linea-fuerte); }
+
+.build__items, .build__runas, .build__hechizos { list-style: none; display: grid; gap: 8px; }
+.build__items { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.build__item, .build__runa { display: flex; align-items: center; gap: 10px; padding: 7px 9px; background: var(--superficie-suave); border: 1px solid var(--linea); }
+.build__item-texto { display: grid; min-width: 0; flex: 1; }
+.build__item-texto strong { font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.build__hechizo { display: flex; align-items: center; gap: 8px; padding: 7px 9px; background: var(--superficie-suave); border: 1px solid var(--linea); }
+.build__hechizo .build__meta { margin-left: 6px; }
+
+/* Build compacta dentro de cada partida del historial */
+.build-partida { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.build-partida__items, .build-partida__extras { display: flex; gap: 3px; }
+
+.aviso--mini { margin: 0 0 12px; font-size: 0.74rem; padding: 8px 12px; background-color: var(--superficie-2); }
+.aviso--mini strong { margin-right: 4px; }
+
+@media (min-width: 700px) {
+  .cat-controles { grid-template-columns: 1fr 1.3fr; align-items: end; }
+}
+
 .ayuda__lista { display: grid; gap: 12px; margin: 16px 0 0 18px; font-size: 0.86rem; line-height: 1.55; color: var(--texto-2); }
 .ayuda__lista strong { color: var(--texto); }
 .ayuda__nota { margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--linea); font-size: 0.78rem; color: var(--texto-3); }

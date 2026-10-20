@@ -99,10 +99,37 @@ para que la PWA y `/api/ranking` compartan origen (requisito para el alcance del
 | puuid desde el Riot ID (Mi grupo) | `GET https://{ruteo}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{nombre}/{tag}` |
 | Rango de un jugador (Mi grupo) | `GET https://{region}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}` |
 | Historial (Mi grupo) | `GET https://{ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids` + `GET .../matches/{id}` |
+| Perfil (Mi grupo) | `GET https://{region}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/{puuid}` |
+| Maestría (Mi grupo) | `GET https://{region}.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/{puuid}/top` |
 
 `{region}` es la plataforma elegida (`la1`, `kr`, `euw1`…) y `{ruteo}` su clúster regional
-(`americas`, `europe`, `asia`, `sea`), que el proxy resuelve solo. Tres familias de API en
-total: `ACCOUNT-V1`, `LEAGUE-V4` y `MATCH-V5`.
+(`americas`, `europe`, `asia`, `sea`), que el proxy resuelve solo. Cinco familias de API en
+total: `ACCOUNT-V1`, `LEAGUE-V4`, `MATCH-V5`, `SUMMONER-V4` y `CHAMPION-MASTERY-V4`.
+
+**Data Dragon** (`ddragon.leagueoflegends.com`) aporta todo lo estático sin gastar cuota:
+retratos y splashes de campeón, iconos de objetos, runas y hechizos, y los catálogos
+localizados (`champion.json`, `item.json`, `runesReforged.json`, `summoner.json`). Es un CDN
+público con CORS; el service worker lo cachea *cache-first* y es el único origen externo.
+
+## Campeones y builds
+
+La tercera pestaña es un catálogo de los 173 campeones (búsqueda y filtro por clase) y, al
+elegir uno, **la build con la que lo ganan los mejores de la región activa**: build final más
+repetida, objetos más comprados con % de uso y winrate, runa clave con árbol secundario,
+hechizos y rol habitual.
+
+Cómo se calcula, porque importa para interpretarla: `/api/campeon` agrega **partidas reales
+de la élite** del ladder seleccionado. Cada partida descargada para cualquier fin (los
+historiales de Mi grupo, por ejemplo) aporta sus 10 participantes al agregado de su región.
+Si un campeón tiene menos de 8 partidas en la muestra, el endpoint la **enriquece bajo
+demanda**: toma jugadores del ladder cacheado y baja sus últimas 5 clasificatorias, con un
+tope de ~28 llamadas por petición para no agotar la ventana. La UI muestra siempre el tamaño
+de la muestra y avisa cuando es pequeña. Es un muestreo de alto elo de *tu* región, no el
+dataset masivo de op.gg; a cambio refleja lo que de verdad juega la élite de LAN, KR o EUW,
+y vive en memoria (un reinicio de la tarea lo vacía y se reconstruye solo con el uso).
+
+Las partidas del historial de Mi grupo también muestran su build: objetos, guardián, hechizos
+y runa clave, con nombre y oro al pasar el cursor.
 
 **Todos los jugadores, con nombres progresivos.** El listado devuelve todas las filas del
 ladder (tope 500). Como cada Riot ID cuesta una llamada a `account-v1` y la clave permite
@@ -143,7 +170,8 @@ Eso significa **una petición extra por jugador**. Como una clave de desarrollo 
 GET /api/ranking?region=la1&cola=RANKED_SOLO_5x5&tier=CHALLENGER
 GET /api/ranking?region=kr&cola=RANKED_SOLO_5x5&tier=GOLD&division=II
 GET /api/jugador?riotId=Nombre%23TAG&region=la1    # rango de un jugador (Mi grupo)
-GET /api/historial?puuid=...&region=la1            # últimas partidas (Mi grupo)
+GET /api/historial?puuid=...&region=la1            # perfil, maestría y últimas partidas con build (Mi grupo)
+GET /api/campeon?id=103&region=la1                 # build agregada de un campeón en la región
 GET /api/estado        # diagnóstico: clave, regiones, cachés, cola de nombres
 ```
 
@@ -202,6 +230,7 @@ ranking-lan/
 │   ├── app.js                 Estado, eventos, pestañas, orquestación
 │   ├── api.js                 Capa de datos: proxy → caché → demo
 │   ├── amigos.js              Sección «Mi grupo»: altas, orden, historial, consejos, compartir
+│   ├── campeones.js           Pestaña «Campeones»: catálogo de Data Dragon y ficha de build
 │   ├── i18n.js                Diccionarios ES/EN, t(), cambio de idioma en vivo
 │   ├── ui.js                  Renderizado (todo con textContent)
 │   └── registro-sw.js         Registro del SW, aviso de versión, instalación

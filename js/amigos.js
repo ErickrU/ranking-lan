@@ -15,6 +15,7 @@ import {
   resumirHistorial,
   versionDataDragon,
   indiceDeCampeones,
+  catalogoDataDragon,
   ErrorDatos,
   COLAS,
   REGIONES,
@@ -593,10 +594,12 @@ async function abrirDetalleDe(riotId, posicion) {
   try {
     // Data Dragon (version e indice de campeones) viaja en paralelo con el
     // historial; si no llega, las fichas salen sin retratos pero completas.
-    const [historial, version, indice] = await Promise.all([
+    const [historial, version, indice, catalogo] = await Promise.all([
       obtenerHistorial({ puuid: dato.puuid, riotId, region, omitirRed: !navigator.onLine }),
       navigator.onLine ? versionDataDragon().catch(() => null) : Promise.resolve(null),
       navigator.onLine ? indiceDeCampeones().catch(() => null) : Promise.resolve(null),
+      // Catalogo de items/runas/hechizos para pintar la build de cada partida.
+      navigator.onLine ? catalogoDataDragon().catch(() => null) : Promise.resolve(null),
     ]);
     if (!marcador.isConnected) return; // se abrio otra ficha mientras tanto
     marcador.remove();
@@ -611,7 +614,7 @@ async function abrirDetalleDe(riotId, posicion) {
     renderCampeones(temporal, resumen?.campeones, version);
     renderRoles(temporal, resumen?.roles);
     renderMaestria(temporal, historial.maestria, version, indice);
-    renderHistorial(temporal, historial.partidas, version);
+    renderHistorial(temporal, historial.partidas, version, catalogo);
     bloque.append(...temporal.childNodes);
     // Perfil y stats van ANTES de la comparacion con el grupo.
     if (comparacionPrevia) extra.insertBefore(bloque, comparacionPrevia);

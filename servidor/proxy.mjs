@@ -788,6 +788,128 @@ const CAMPEONES_DEMO = [
 /** Partidas que trae el historial. Cada una cuesta 1 llamada a match-v5. */
 const PARTIDAS_HISTORIAL = 10;
 
+/* Ids reales de Data Dragon para las builds de demostracion (items miticos y
+   legendarios habituales, runas clave de los cinco arboles, parejas de
+   hechizos). Compartidos por historialDemo() y buildDemo(). */
+const ITEMS_DEMO = [3031, 3036, 3072, 3094, 6672, 6673, 3089, 3157, 4645, 3135, 3100, 6655, 3071, 6333, 3053, 3742, 3068, 3083, 3190, 3222, 6617, 3504, 3107];
+const CLAVES_DEMO = [8005, 8008, 8021, 8010, 8112, 8128, 9923, 8214, 8229, 8230, 8437, 8439, 8465, 8351, 8360, 8369];
+const ARBOL_DE_CLAVE = (id) => Math.floor(id / 100) * 100;
+const HECHIZOS_DEMO = [[4, 14], [4, 12], [4, 7], [4, 3], [4, 11], [4, 6]];
+
+/* --------------------------------------------------------------------------
+ * Builds: items, runas y hechizos de un participante de match-v5.
+ * Solo ids; los nombres e imagenes salen de Data Dragon en el cliente.
+ * -------------------------------------------------------------------------- */
+function extraerBuild(p) {
+  const items = [p.item0, p.item1, p.item2, p.item3, p.item4, p.item5]
+    .map((i) => Number(i) || 0);
+  const estilos = p.perks?.styles ?? [];
+  const primario = estilos.find((s) => s.description === 'primaryStyle') ?? estilos[0];
+  const secundario = estilos.find((s) => s.description === 'subStyle') ?? estilos[1];
+  return {
+    items,
+    guardian: Number(p.item6) || 0,
+    hechizos: [Number(p.summoner1Id) || 0, Number(p.summoner2Id) || 0],
+    runas: {
+      clave: primario?.selections?.[0]?.perk ?? 0,
+      primario: primario?.style ?? 0,
+      secundario: secundario?.style ?? 0,
+      // Todas las runas elegidas, en orden, para la vista completa.
+      todas: [...(primario?.selections ?? []), ...(secundario?.selections ?? [])].map((s) => s.perk),
+    },
+  };
+}
+
+/* --------------------------------------------------------------------------
+ * Agregado de builds por campeon y region.
+ *
+ * Cada partida real que pasa por el proxy (historiales de Mi grupo) aporta a
+ * sus 10 participantes. Es un muestreo de alto elo de la propia region, no
+ * un dataset masivo: por eso la UI muestra el tamano de la muestra y marca
+ * las builds con pocas partidas. Vive en memoria; un reinicio lo vacia.
+ * -------------------------------------------------------------------------- */
+const buildsPorRegion = new Map(); // region -> Map(championId -> stats)
+const partidasVistas = new Set();  // matchId: no contar una partida dos veces
+const MAX_PARTIDAS_VISTAS = 5000;
+
+function registrarBuildsDePartida(region, partida) {
+  const id = partida?.metadata?.matchId;
+  if (!id || partidasVistas.has(id)) return;
+  if (partidasVistas.size >= MAX_PARTIDAS_VISTAS) partidasVistas.clear();
+  partidasVistas.add(id);
+
+  if (!buildsPorRegion.has(region)) buildsPorRegion.set(region, new Map());
+  const porCampeon = buildsPorRegion.get(region);
+
+  for (const p of partida.info?.participants ?? []) {
+    if (!p.championId) continue;
+    const build = extraerBuild(p);
+    const c = porCampeon.get(p.championId) ?? {
+      campeonId: p.championId,
+      campeon: p.championName ?? '',
+      partidas: 0,
+      victorias: 0,
+      k: 0, d: 0, a: 0,
+      items: new Map(),       // itemId -> { n, v }
+      claves: new Map(),      // perkId -> { n, v, primario, secundario }
+      hechizos: new Map(),    // "a-b" ordenado -> { n, v }
+      roles: new Map(),       // posicion -> n
+      conjuntos: new Map(),   // items finales ordenados "a,b,c" -> { n, v, items }
+    };
+
+    const gano = Boolean(p.win);
+    c.partidas++;
+    if (gano) c.victorias++;
+    c.k += p.kills ?? 0; c.d += p.deaths ?? 0; c.a += p.assists ?? 0;
+
+    const sumar = (mapa, clave, extra = {}) => {
+      const e = mapa.get(clave) ?? { n: 0, v: 0, ...extra };
+      e.n++;
+      if (gano) e.v++;
+      mapa.set(clave, e);
+    };
+
+    for (const item of build.items) if (item) sumar(c.items, item);
+    if (build.runas.clave) {
+      sumar(c.claves, build.runas.clave, { primario: build.runas.primario, secundario: build.runas.secundario });
+    }
+    const hechizos = [...build.hechizos].filter(Boolean).sort((a, b) => a - b);
+    if (hechizos.length === 2) sumar(c.hechizos, hechizos.join('-'));
+    const rol = p.teamPosition || p.individualPosition;
+    if (rol) c.roles.set(rol, (c.roles.get(rol) ?? 0) + 1);
+
+    // Conjunto final: los items de >= 2000 de oro no se conocen aqui (no hay
+    // precios en match-v5), asi que se toma la build completa de 6 huecos
+    // ordenada; en cliente se filtran consumibles con Data Dragon.
+    const finales = build.items.filter(Boolean).sort((a, b) => a - b);
+    if (finales.length >= 4) sumar(c.conjuntos, finales.join(','), { items: finales });
+
+    porCampeon.set(p.championId, c);
+  }
+}
+
+/** Serializa el agregado de un campeon: top por frecuencia, con winrate. */
+function resumenBuild(c) {
+  const top = (mapa, cuantos, mapear = (clave, e) => ({ id: Number(clave), ...e })) =>
+    [...mapa.entries()]
+      .sort((x, y) => y[1].n - x[1].n || y[1].v - x[1].v)
+      .slice(0, cuantos)
+      .map(([clave, e]) => ({ ...mapear(clave, e), winrate: e.n ? (e.v / e.n) * 100 : 0 }));
+
+  return {
+    campeonId: c.campeonId,
+    campeon: c.campeon,
+    partidas: c.partidas,
+    winrate: c.partidas ? (c.victorias / c.partidas) * 100 : 0,
+    kda: c.d ? (c.k + c.a) / c.d : null,
+    roles: [...c.roles.entries()].sort((x, y) => y[1] - x[1]).map(([rol, n]) => ({ rol, n })),
+    items: top(c.items, 8),
+    claves: top(c.claves, 3),
+    hechizos: top(c.hechizos, 2, (clave, e) => ({ ids: clave.split('-').map(Number), n: e.n, v: e.v })),
+    conjuntos: top(c.conjuntos, 3, (clave, e) => ({ items: e.items, n: e.n, v: e.v })),
+  };
+}
+
 function historialDemo(semillaTexto) {
   const al = crearAleatorio(hashCadena(`historial|${semillaTexto}`));
   const cuantas = PARTIDAS_HISTORIAL;
@@ -808,7 +930,14 @@ function historialDemo(semillaTexto) {
     const k = Math.floor(al() * (victoria ? 14 : 9));
     const a = Math.floor(al() * 16);
     const minutos = duracionSeg / 60;
+    // Build demo con ids reales de Data Dragon (6 items + guardian, 2 hechizos, runa clave).
+    const itemsDemo = [...new Set(Array.from({ length: 8 }, () => ITEMS_DEMO[Math.floor(al() * ITEMS_DEMO.length)]))].slice(0, 6);
+    const claveDemo = CLAVES_DEMO[Math.floor(al() * CLAVES_DEMO.length)];
     partidas.push({
+      items: [...itemsDemo, 0, 0, 0, 0, 0, 0].slice(0, 6),
+      guardian: al() < 0.5 ? 3340 : 3364,
+      hechizos: HECHIZOS_DEMO[Math.floor(al() * HECHIZOS_DEMO.length)],
+      runas: { clave: claveDemo, primario: ARBOL_DE_CLAVE(claveDemo), secundario: ARBOL_DE_CLAVE(CLAVES_DEMO[Math.floor(al() * CLAVES_DEMO.length)]), todas: [claveDemo] },
       campeon: al() < 0.75 ? pool[Math.floor(al() * pool.length)] : CAMPEONES_DEMO[Math.floor(al() * CAMPEONES_DEMO.length)],
       campeonId: null,
       victoria,
@@ -903,6 +1032,7 @@ async function manejarHistorial(url, respuesta) {
         .reduce((s, p) => s + (p.kills ?? 0), 0);
 
       partidas.push({
+        ...extraerBuild(yo),
         campeon: yo.championName ?? '—',
         campeonId: yo.championId ?? null,
         victoria: Boolean(yo.win),
@@ -922,6 +1052,10 @@ async function manejarHistorial(url, respuesta) {
           ? new Date(partida.info.gameEndTimestamp).toISOString()
           : null,
       });
+
+      // Cada partida real descargada alimenta tambien el agregado de builds
+      // por campeon de la region (todos los participantes, no solo "yo").
+      registrarBuildsDePartida(region, partida);
     }
 
     const valor = {
@@ -948,6 +1082,124 @@ async function manejarHistorial(url, respuesta) {
     if (guardado) return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'vencida' });
     return json(respuesta, error.estado === 429 ? 429 : 502, { error: error.message });
   }
+}
+
+/* ==========================================================================
+   Endpoint /api/campeon · builds de un campeon en una region
+   --------------------------------------------------------------------------
+   GET /api/campeon?id=103&region=la1
+   Si el agregado tiene pocas partidas de ese campeon, se enriquece bajo
+   demanda con el historial reciente de la elite de la region: se toman
+   jugadores del ladder cacheado y se descargan sus ultimas partidas
+   clasificatorias (match-v5) hasta un presupuesto fijo de llamadas. Lo que
+   se descarga alimenta a TODOS los campeones, asi que la segunda consulta
+   casi siempre sale de memoria.
+   ========================================================================== */
+
+const MIN_PARTIDAS_BUILD = 8;        // muestra minima antes de dejar de buscar
+const PRESUPUESTO_LLAMADAS_BUILD = 28; // tope por peticion (~1/4 de la ventana)
+
+async function enriquecerBuilds(region, campeonId) {
+  const ladder = cacheListados.get(`${region}|RANKED_SOLO_5x5|CHALLENGER|I`)?.valor
+    ?? cacheListados.get(`${region}|RANKED_SOLO_5x5|GRANDMASTER|I`)?.valor;
+  if (!ladder) return;
+
+  const ruteo = REGIONES[region].partidas;
+  let llamadas = 0;
+  const tienePartidas = () => (buildsPorRegion.get(region)?.get(campeonId)?.partidas ?? 0) >= MIN_PARTIDAS_BUILD;
+
+  // Jugadores con puuid, en orden del ladder; cada uno: 1 llamada (ids) +
+  // hasta 5 (partidas). Las partidas ya vistas no se vuelven a pedir.
+  for (const jugador of ladder.jugadores) {
+    if (tienePartidas() || llamadas >= PRESUPUESTO_LLAMADAS_BUILD || !jugador.puuid) {
+      if (!jugador.puuid) continue;
+      break;
+    }
+    let ids;
+    try {
+      ids = await pedirARiot(
+        `https://${ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(jugador.puuid)}/ids?type=ranked&count=5`,
+      );
+      llamadas++;
+    } catch { break; }
+
+    const nuevas = (ids ?? []).filter((id) => !partidasVistas.has(id));
+    for (const id of nuevas) {
+      if (llamadas >= PRESUPUESTO_LLAMADAS_BUILD) break;
+      try {
+        const partida = await pedirARiot(`https://${ruteo}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(id)}`);
+        llamadas++;
+        registrarBuildsDePartida(region, partida);
+      } catch { break; }
+    }
+  }
+}
+
+/* Build demo determinista para un campeon (sin clave). Items y runas son ids
+   reales de Data Dragon (constantes declaradas junto a PARTIDAS_HISTORIAL)
+   para que la UI los resuelva con nombre e imagen. */
+function buildDemo(region, campeonId) {
+  const al = crearAleatorio(hashCadena(`build|${region}|${campeonId}`));
+  const elegir = (arr) => arr[Math.floor(al() * arr.length)];
+  const partidas = 40 + Math.floor(al() * 160);
+  const wr = 46 + al() * 10;
+  const pool = [...new Set(Array.from({ length: 10 }, () => elegir(ITEMS_DEMO)))];
+  const items = pool.slice(0, 8).map((id, i) => ({ id, n: Math.round(partidas * (0.9 - i * 0.1)), winrate: 44 + al() * 14 }));
+  const conjunto = pool.slice(0, 6).sort((a, b) => a - b);
+  const clave = elegir(CLAVES_DEMO);
+  const clave2 = elegir(CLAVES_DEMO.filter((c) => c !== clave));
+  const roles = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'];
+  const rol = elegir(roles);
+  return {
+    campeonId,
+    campeon: '',
+    partidas,
+    winrate: wr,
+    kda: 2 + al() * 2,
+    roles: [{ rol, n: Math.round(partidas * 0.8) }, { rol: elegir(roles.filter((r) => r !== rol)), n: Math.round(partidas * 0.2) }],
+    items,
+    claves: [
+      { id: clave, primario: ARBOL_DE_CLAVE(clave), secundario: ARBOL_DE_CLAVE(clave2), n: Math.round(partidas * 0.7), winrate: wr + 1 },
+      { id: clave2, primario: ARBOL_DE_CLAVE(clave2), secundario: ARBOL_DE_CLAVE(clave), n: Math.round(partidas * 0.3), winrate: wr - 2 },
+    ],
+    hechizos: [{ ids: elegir(HECHIZOS_DEMO), n: Math.round(partidas * 0.85), winrate: wr }],
+    conjuntos: [{ items: conjunto, n: Math.round(partidas * 0.35), winrate: wr + 2 }],
+  };
+}
+
+async function manejarCampeon(url, respuesta) {
+  const region = regionDe(url);
+  if (!region) return json(respuesta, 400, { error: `Región no válida: ${url.searchParams.get('region')}` });
+  const campeonId = Number(url.searchParams.get('id'));
+  if (!Number.isInteger(campeonId) || campeonId <= 0 || campeonId > 10_000) {
+    return json(respuesta, 400, { error: 'id de campeón no válido' });
+  }
+
+  if (!CONFIG.clave) {
+    return json(respuesta, 200, {
+      esquema: 1, fuente: 'demo', region: region.toUpperCase(),
+      actualizado: new Date().toISOString(),
+      aviso: 'Sin RIOT_API_KEY en el servidor: builds de demostración (ids reales de Data Dragon, frecuencias ficticias).',
+      build: buildDemo(region, campeonId),
+    }, { 'X-Ranking-Cache': 'demo' });
+  }
+
+  try {
+    const antes = buildsPorRegion.get(region)?.get(campeonId)?.partidas ?? 0;
+    if (antes < MIN_PARTIDAS_BUILD) await enriquecerBuilds(region, campeonId);
+  } catch (error) {
+    console.error(`[proxy] builds ${region} ${campeonId}: ${error.message}`);
+  }
+
+  const c = buildsPorRegion.get(region)?.get(campeonId);
+  return json(respuesta, 200, {
+    esquema: 1,
+    fuente: 'vivo',
+    region: region.toUpperCase(),
+    actualizado: new Date().toISOString(),
+    muestraTotal: [...(buildsPorRegion.get(region)?.values() ?? [])].reduce((s, x) => s + x.partidas, 0),
+    build: c ? resumenBuild(c) : null,
+  }, { 'X-Ranking-Cache': c ? 'red' : 'vacio' });
 }
 
 /* ==========================================================================
@@ -1043,6 +1295,7 @@ const servidor = createServer(async (peticion, respuesta) => {
     if (url.pathname === '/api/ranking') return await manejarRanking(url, respuesta);
     if (url.pathname === '/api/jugador') return await manejarJugador(url, respuesta);
     if (url.pathname === '/api/historial') return await manejarHistorial(url, respuesta);
+    if (url.pathname === '/api/campeon') return await manejarCampeon(url, respuesta);
 
     if (url.pathname === '/api/estado') {
       return json(respuesta, 200, {
@@ -1107,6 +1360,7 @@ servidor.listen(CONFIG.puerto, () => {
   console.log(`  App          http://localhost:${CONFIG.puerto}/`);
   console.log(`  Ranking      http://localhost:${CONFIG.puerto}/api/ranking?tier=CHALLENGER&cola=RANKED_SOLO_5x5`);
   console.log(`  Jugador      http://localhost:${CONFIG.puerto}/api/jugador?riotId=Nombre%23TAG`);
+  console.log(`  Builds       http://localhost:${CONFIG.puerto}/api/campeon?id=103&region=la1`);
   console.log(`  Estado       http://localhost:${CONFIG.puerto}/api/estado`);
   console.log(linea);
   if (CONFIG.clave) {

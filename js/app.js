@@ -19,6 +19,7 @@ import {
   abrirDetalle,
 } from './ui.js';
 import { iniciarGrupo } from './amigos.js';
+import { iniciarCampeones } from './campeones.js';
 
 /* ------------------------------------------------------------------ *
  * Referencias al DOM
@@ -411,16 +412,22 @@ const CLAVE_VISTA = 'ranking-lan:vista';
 const pestanas = {
   global: { tab: $('#tab-global'), panel: $('#vista-global') },
   grupo: { tab: $('#tab-grupo'), panel: $('#vista-grupo') },
+  campeones: { tab: $('#tab-campeones'), panel: $('#vista-campeones') },
 };
 
+// La pestana Campeones descarga el catalogo de Data Dragon solo la primera
+// vez que se abre.
+const cargarCampeones = iniciarCampeones();
+
 function activarVista(nombre) {
-  const activa = nombre === 'grupo' ? 'grupo' : 'global';
+  const activa = nombre in pestanas ? nombre : 'global';
   for (const [clave, { tab, panel }] of Object.entries(pestanas)) {
     const seleccionada = clave === activa;
     tab.setAttribute('aria-selected', String(seleccionada));
     tab.tabIndex = seleccionada ? 0 : -1;
     panel.hidden = !seleccionada;
   }
+  if (activa === 'campeones') cargarCampeones();
   try { localStorage.setItem(CLAVE_VISTA, activa); } catch { /* modo privado */ }
 }
 
@@ -431,7 +438,7 @@ for (const [clave, { tab }] of Object.entries(pestanas)) {
 // Flechas entre pestanas, como pide el patron tablist de WAI-ARIA.
 document.querySelector('.pestanas').addEventListener('keydown', (evento) => {
   if (evento.key !== 'ArrowLeft' && evento.key !== 'ArrowRight') return;
-  const orden = [pestanas.global.tab, pestanas.grupo.tab];
+  const orden = [pestanas.global.tab, pestanas.grupo.tab, pestanas.campeones.tab];
   const actual = orden.indexOf(document.activeElement);
   if (actual === -1) return;
   const paso = evento.key === 'ArrowRight' ? 1 : orden.length - 1;
@@ -455,10 +462,11 @@ const importados = iniciarGrupo(parametros);
 // Vista inicial: enlace compartido > parametro ?vista > ultima usada.
 let vistaInicial = 'global';
 try {
-  if (localStorage.getItem(CLAVE_VISTA) === 'grupo') vistaInicial = 'grupo';
+  const guardada = localStorage.getItem(CLAVE_VISTA);
+  if (guardada in pestanas) vistaInicial = guardada;
 } catch { /* modo privado */ }
 const vistaParam = parametros.get('vista');
-if (vistaParam === 'grupo' || vistaParam === 'global') vistaInicial = vistaParam;
+if (vistaParam in pestanas) vistaInicial = vistaParam;
 if (importados > 0) vistaInicial = 'grupo';
 activarVista(vistaInicial);
 

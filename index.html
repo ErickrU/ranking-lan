@@ -110,6 +110,11 @@
       <svg class="pestana__icono" aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9" r="2.6"/><path d="M3 19a6 6 0 0 1 12 0M14.5 18.5a4.5 4.5 0 0 1 6.5-3.8"/></svg>
       <span data-i18n="tab.grupo">Mi grupo</span>
     </button>
+    <button class="pestana" id="tab-campeones" role="tab" type="button"
+            aria-selected="false" aria-controls="vista-campeones" tabindex="-1">
+      <svg class="pestana__icono" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20 14.5 9.5M14 4l6 6-3 3-6-6zM4 20l3-1-2-2z"/></svg>
+      <span data-i18n="tab.campeones">Campeones</span>
+    </button>
   </nav>
 
   <main id="contenido" class="contenido">
@@ -332,6 +337,37 @@
 
     </div>
     <!-- ╚══════════════════════ FIN VISTA MI GRUPO ══════════════════════╝ -->
+
+    <!-- ╔══════════════════════ VISTA: CAMPEONES Y BUILDS ══════════════════════╗ -->
+    <div id="vista-campeones" class="vista" role="tabpanel" aria-labelledby="tab-campeones" hidden>
+      <section class="panel">
+        <div class="panel__cabecera">
+          <h2 class="panel__titulo" data-i18n="cat.titulo">Campeones y builds</h2>
+          <p id="cat-nota" class="panel__nota"></p>
+        </div>
+        <p class="grupo-intro" data-i18n="cat.intro"></p>
+
+        <div class="cat-controles">
+          <div class="control control--crece">
+            <label for="cat-buscar" data-i18n="cat.buscar">Buscar campe&oacute;n</label>
+            <div class="buscador">
+              <svg class="buscador__icono" aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+              <input id="cat-buscar" type="search" autocomplete="off" enterkeyhint="search"
+                     placeholder="Nombre, p. ej. Ahri" data-i18n-attr="placeholder:cat.buscarPlaceholder">
+            </div>
+          </div>
+          <div class="control">
+            <span class="control__etiqueta" data-i18n="cat.rol">Tipo</span>
+            <div id="cat-clases" class="cat-chips" role="group" data-i18n-attr="aria-label:cat.rol" aria-label="Tipo"></div>
+          </div>
+        </div>
+
+        <p id="cat-estado" class="mensaje-vacio" hidden></p>
+        <div id="cat-rejilla" class="cat-rejilla"></div>
+        <p id="cat-vacio" class="mensaje-vacio" data-i18n="cat.vacio" hidden></p>
+      </section>
+    </div>
+    <!-- ╚══════════════════════ FIN VISTA CAMPEONES ══════════════════════╝ -->
 
   </main>
 

@@ -6,7 +6,10 @@
  * marcado dependa de datos externos. Todas las cadenas visibles pasan por t().
  */
 
-import { FUENTE, numero, tiempoRelativo, fechaCompleta, urlRetratoCampeon, urlIconoPerfil } from './api.js';
+import {
+  FUENTE, numero, tiempoRelativo, fechaCompleta,
+  urlRetratoCampeon, urlIconoPerfil, urlItem, urlRuna, urlHechizo,
+} from './api.js';
 import { t } from './i18n.js';
 
 const MEDALLAS = ['🥇', '🥈', '🥉'];
@@ -338,7 +341,7 @@ export function abrirDetalle(dialogo, nodos, jugador, contexto) {
  * ------------------------------------------------------------------ */
 
 /** Retrato de campeon desde Data Dragon, con inicial como respaldo si no carga. */
-function retratoCampeon(campeon, version, clase = 'retrato') {
+export function retratoCampeon(campeon, version, clase = 'retrato') {
   const marco = elemento('span', clase);
   marco.dataset.inicial = (campeon || '?').slice(0, 1).toUpperCase();
   if (version && campeon && campeon !== '—') {
@@ -498,8 +501,9 @@ export function renderMaestria(contenedor, maestria, version, indice) {
   contenedor.append(seccion);
 }
 
-/** Lista de partidas del historial (match-v5) ya normalizadas por el proxy. */
-export function renderHistorial(contenedor, partidas, version) {
+/** Lista de partidas del historial (match-v5) ya normalizadas por el proxy.
+    Con catalogo, cada partida muestra ademas su build (items, hechizos, runa). */
+export function renderHistorial(contenedor, partidas, version, catalogo = null) {
   const seccion = elemento('section', 'dialogo__seccion');
   seccion.append(elemento('h4', 'dialogo__subtitulo', t('historial.titulo')));
 
@@ -534,6 +538,7 @@ export function renderHistorial(contenedor, partidas, version) {
     if (p.dano) extras.push(`${numero(Math.round(p.dano / 1000))}k ${t('historial.dano')}`);
     if (p.duracionSeg) extras.push(t('historial.min', { min: Math.round(p.duracionSeg / 60) }));
     centro.append(elemento('span', 'historial__meta', extras.join(' · ')));
+    if (catalogo) renderBuildPartida(centro, p, catalogo);
     item.append(centro);
 
     if (p.terminada) {
@@ -580,4 +585,181 @@ export function renderConsejos(contenedor, consejos) {
     la comparacion contra el grupo ya puede estar pintada encima). */
 export function renderExtraMensaje(contenedor, texto) {
   contenedor.append(elemento('p', 'dialogo__cargando', texto));
+}
+
+/* ------------------------------------------------------------------ *
+ * Builds: objetos, runas y hechizos (Data Dragon resuelve nombres e imagenes)
+ * ------------------------------------------------------------------ */
+
+/** Icono cuadrado de un objeto con tooltip de nombre y oro. */
+export function iconoItem(id, catalogo, clase = 'item') {
+  const info = catalogo?.items.get(id);
+  const caja = elemento('span', clase);
+  if (!id) { caja.classList.add('item--vacio'); return caja; }
+  caja.title = info ? `${info.nombre}${info.oro ? ` · ${numero(info.oro)} g` : ''}${info.descripcion ? `\n${info.descripcion}` : ''}` : `#${id}`;
+  caja.setAttribute('aria-label', info?.nombre ?? `#${id}`);
+  const img = document.createElement('img');
+  img.alt = '';
+  img.crossOrigin = 'anonymous';
+  img.loading = 'lazy';
+  img.width = 36; img.height = 36;
+  img.src = urlItem(id, catalogo.version);
+  img.addEventListener('error', () => img.remove(), { once: true });
+  caja.append(img);
+  return caja;
+}
+
+export function iconoRuna(id, catalogo, clase = 'runa') {
+  const info = catalogo?.runas.get(id);
+  const caja = elemento('span', clase);
+  if (!info) { caja.textContent = '?'; return caja; }
+  caja.title = info.nombre;
+  caja.setAttribute('aria-label', info.nombre);
+  const img = document.createElement('img');
+  img.alt = '';
+  img.crossOrigin = 'anonymous';
+  img.loading = 'lazy';
+  img.src = urlRuna(info.icono);
+  img.addEventListener('error', () => img.remove(), { once: true });
+  caja.append(img);
+  return caja;
+}
+
+export function iconoHechizo(key, catalogo, clase = 'hechizo') {
+  const info = catalogo?.hechizos.get(key);
+  const caja = elemento('span', clase);
+  if (!info) { caja.textContent = '?'; return caja; }
+  caja.title = info.nombre;
+  caja.setAttribute('aria-label', info.nombre);
+  const img = document.createElement('img');
+  img.alt = '';
+  img.crossOrigin = 'anonymous';
+  img.loading = 'lazy';
+  img.src = urlHechizo(info.idInterno, catalogo.version);
+  img.addEventListener('error', () => img.remove(), { once: true });
+  caja.append(img);
+  return caja;
+}
+
+/** Fila compacta items + guardian + hechizos + runa clave (historial del grupo). */
+export function renderBuildPartida(contenedor, partida, catalogo) {
+  if (!catalogo || !partida.items) return;
+  const fila = elemento('div', 'build-partida');
+  const items = elemento('span', 'build-partida__items');
+  for (const id of partida.items) items.append(iconoItem(id, catalogo, 'item item--sm'));
+  if (partida.guardian) items.append(iconoItem(partida.guardian, catalogo, 'item item--sm item--guardian'));
+  fila.append(items);
+
+  const extras = elemento('span', 'build-partida__extras');
+  for (const k of partida.hechizos ?? []) if (k) extras.append(iconoHechizo(k, catalogo, 'hechizo hechizo--sm'));
+  if (partida.runas?.clave) extras.append(iconoRuna(partida.runas.clave, catalogo, 'runa runa--sm'));
+  fila.append(extras);
+  contenedor.append(fila);
+}
+
+/** Ficha completa de build agregada de un campeon. */
+export function renderBuild(contenedor, { fuente, aviso, build, campeon, catalogo }) {
+  if (aviso && fuente === FUENTE.DEMO) {
+    const a = elemento('p', 'aviso aviso--mini');
+    a.append(elemento('strong', null, t('aviso.demo')), document.createTextNode(` ${aviso}`));
+    contenedor.append(a);
+  }
+
+  if (!build || !build.partidas) {
+    contenedor.append(elemento('p', 'build__vacio', t('build.sinDatos')));
+    return;
+  }
+
+  /* Cabecera: retrato grande + stats */
+  const cab = elemento('section', 'dialogo__seccion build__cab');
+  cab.append(retratoCampeon(campeon.idInterno, catalogo.version, 'retrato retrato--xl'));
+  const stats = elemento('div', 'perfil__stats build__stats');
+  const stat = (v, et, clase = '') => {
+    const caja = elemento('div', `perfil__stat ${clase}`.trim());
+    caja.append(elemento('strong', 'perfil__valor', v));
+    caja.append(elemento('span', 'perfil__etiqueta', et));
+    return caja;
+  };
+  stats.append(stat(`${build.winrate.toFixed(0)} %`, t('build.winrate'), build.winrate >= 52 ? 'perfil__stat--bien' : build.winrate < 48 ? 'perfil__stat--mal' : ''));
+  if (build.kda !== null) stats.append(stat(build.kda.toFixed(2), t('build.kda')));
+  const rol = build.roles?.[0]?.rol;
+  if (rol) stats.append(stat(t(`posicion.${rol}`) !== `posicion.${rol}` ? t(`posicion.${rol}`) : rol, t('build.rol')));
+  cab.append(stats);
+  contenedor.append(cab);
+
+  const muestra = elemento('p', `build__muestra ${build.partidas < 15 ? 'build__muestra--corta' : ''}`.trim(),
+    build.partidas < 15 ? t('build.muestraCorta', { n: numero(build.partidas) }) : t('build.muestra', { n: numero(build.partidas) }));
+  contenedor.append(muestra);
+
+  /* Build final mas repetida */
+  const conjunto = build.conjuntos?.[0];
+  if (conjunto) {
+    const s = elemento('section', 'dialogo__seccion');
+    s.append(elemento('h4', 'dialogo__subtitulo', t('build.conjunto')));
+    const fila = elemento('div', 'build__conjunto');
+    // Se omiten consumibles y guardianes: no son "la build".
+    for (const id of conjunto.items) {
+      if (catalogo.items.get(id)?.consumible) continue;
+      fila.append(iconoItem(id, catalogo));
+    }
+    s.append(fila);
+    s.append(elemento('p', 'build__meta', `${t('build.veces', { n: conjunto.n })} · ${conjunto.winrate.toFixed(0)} % WR`));
+    contenedor.append(s);
+  }
+
+  /* Objetos mas comprados */
+  if (build.items?.length) {
+    const s = elemento('section', 'dialogo__seccion');
+    s.append(elemento('h4', 'dialogo__subtitulo', t('build.items')));
+    const lista = elemento('ul', 'build__items');
+    for (const it of build.items) {
+      if (catalogo.items.get(it.id)?.consumible) continue;
+      const li = elemento('li', 'build__item');
+      li.append(iconoItem(it.id, catalogo));
+      const txt = elemento('div', 'build__item-texto');
+      txt.append(elemento('strong', null, catalogo.items.get(it.id)?.nombre ?? `#${it.id}`));
+      txt.append(elemento('span', 'build__meta', `${t('build.pct', { n: Math.round((it.n / build.partidas) * 100) })} · ${it.winrate.toFixed(0)} % WR`));
+      li.append(txt);
+      lista.append(li);
+    }
+    s.append(lista);
+    contenedor.append(s);
+  }
+
+  /* Runas */
+  if (build.claves?.length) {
+    const s = elemento('section', 'dialogo__seccion');
+    s.append(elemento('h4', 'dialogo__subtitulo', t('build.runas')));
+    const lista = elemento('ul', 'build__runas');
+    for (const r of build.claves) {
+      const li = elemento('li', 'build__runa');
+      li.append(iconoRuna(r.id, catalogo, 'runa runa--lg'));
+      const txt = elemento('div', 'build__item-texto');
+      const nombre = catalogo.runas.get(r.id)?.nombre ?? `#${r.id}`;
+      const arbolSec = catalogo.runas.get(r.secundario)?.nombre;
+      txt.append(elemento('strong', null, nombre));
+      txt.append(elemento('span', 'build__meta',
+        `${arbolSec ? t('build.secundario', { arbol: arbolSec }) + ' · ' : ''}${t('build.pct', { n: Math.round((r.n / build.partidas) * 100) })} · ${r.winrate.toFixed(0)} % WR`));
+      li.append(txt);
+      if (r.secundario) li.append(iconoRuna(r.secundario, catalogo, 'runa runa--arbol'));
+      lista.append(li);
+    }
+    s.append(lista);
+    contenedor.append(s);
+  }
+
+  /* Hechizos */
+  if (build.hechizos?.length) {
+    const s = elemento('section', 'dialogo__seccion');
+    s.append(elemento('h4', 'dialogo__subtitulo', t('build.hechizos')));
+    const lista = elemento('ul', 'build__hechizos');
+    for (const h of build.hechizos) {
+      const li = elemento('li', 'build__hechizo');
+      for (const k of h.ids) li.append(iconoHechizo(k, catalogo));
+      li.append(elemento('span', 'build__meta', `${t('build.pct', { n: Math.round((h.n / build.partidas) * 100) })} · ${h.winrate.toFixed(0)} % WR`));
+      lista.append(li);
+    }
+    s.append(lista);
+    contenedor.append(s);
+  }
 }
