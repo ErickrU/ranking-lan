@@ -13,7 +13,7 @@
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
 const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS]);

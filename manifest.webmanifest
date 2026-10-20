@@ -10,8 +10,8 @@
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone"],
   "orientation": "portrait-primary",
-  "background_color": "#0a1428",
-  "theme_color": "#0a1428",
+  "background_color": "#0a0f1c",
+  "theme_color": "#0a0f1c",
   "categories": ["games", "sports", "entertainment"],
   "icons": [
     {

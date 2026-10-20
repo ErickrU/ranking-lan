@@ -8,7 +8,7 @@
 
   <!-- PWA -->
   <link rel="manifest" href="./manifest.webmanifest">
-  <meta name="theme-color" content="#0a1428">
+  <meta name="theme-color" content="#0a0f1c">
   <meta name="color-scheme" content="dark light">
 
   <!-- Iconos -->
@@ -102,11 +102,13 @@
   <nav class="pestanas" role="tablist" data-i18n-attr="aria-label:tabs.aria" aria-label="Secciones de la aplicaci&oacute;n">
     <button class="pestana" id="tab-global" role="tab" type="button"
             aria-selected="true" aria-controls="vista-global">
-      <span aria-hidden="true">🌎</span> <span data-i18n="tab.global">Ranking regional</span>
+      <svg class="pestana__icono" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+      <span data-i18n="tab.global">Ranking regional</span>
     </button>
     <button class="pestana" id="tab-grupo" role="tab" type="button"
             aria-selected="false" aria-controls="vista-grupo" tabindex="-1">
-      <span aria-hidden="true">👥</span> <span data-i18n="tab.grupo">Mi grupo</span>
+      <svg class="pestana__icono" aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9" r="2.6"/><path d="M3 19a6 6 0 0 1 12 0M14.5 18.5a4.5 4.5 0 0 1 6.5-3.8"/></svg>
+      <span data-i18n="tab.grupo">Mi grupo</span>
     </button>
   </nav>
 
@@ -176,7 +178,7 @@
       <div class="control control--crece">
         <label for="campo-buscar" data-i18n="control.buscar">Buscar jugador</label>
         <div class="buscador">
-          <span class="buscador__icono" aria-hidden="true">🔍</span>
+          <svg class="buscador__icono" aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
           <input id="campo-buscar" type="search" autocomplete="off" enterkeyhint="search"
                  placeholder="Riot ID, p. ej. Jaguar" data-i18n-attr="placeholder:buscar.placeholder">
         </div>

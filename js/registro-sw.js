@@ -217,7 +217,7 @@ btnCompartir?.addEventListener('click', async () => {
    4. Tema claro / oscuro
    ================================================================ */
 const CLAVE_TEMA = 'ranking-lan:tema';
-const COLOR_TEMA = { oscuro: '#0a1428', claro: '#eef1f6' }; // = --azul-800 de cada tema
+const COLOR_TEMA = { oscuro: '#0a0f1c', claro: '#f2f6fb' }; // = fondo de cada tema
 
 function aplicarTema(tema, guardar = true) {
   document.documentElement.dataset.tema = tema;

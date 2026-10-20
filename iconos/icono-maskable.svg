@@ -1,35 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Ranking LAN">
   <defs>
     <linearGradient id="fondo" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0a1428"/>
-      <stop offset="0.55" stop-color="#0e2038"/>
-      <stop offset="1" stop-color="#04070d"/>
+      <stop offset="0" stop-color="#0d1526"/>
+      <stop offset="1" stop-color="#04060b"/>
     </linearGradient>
-    <radialGradient id="brillo" cx="0.5" cy="0.42" r="0.55">
-      <stop offset="0" stop-color="#c8aa6e" stop-opacity="0.30"/>
-      <stop offset="1" stop-color="#c8aa6e" stop-opacity="0"/>
+    <linearGradient id="cian" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ff3ff"/>
+      <stop offset="1" stop-color="#00b7d6"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.45" r="0.45">
+      <stop offset="0" stop-color="#28e5ff" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#28e5ff" stop-opacity="0"/>
     </radialGradient>
-    <linearGradient id="oro" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f0e6d2"/>
-      <stop offset="0.42" stop-color="#c8aa6e"/>
-      <stop offset="1" stop-color="#785a28"/>
-    </linearGradient>
+    <pattern id="rejilla" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0v32" fill="none" stroke="#28e5ff" stroke-opacity="0.12" stroke-width="1"/>
+    </pattern>
   </defs>
-
   <rect width="512" height="512" fill="url(#fondo)"/>
-  <rect width="512" height="512" fill="url(#brillo)"/>
-
-  <!-- Contenido dentro de la zona segura (circulo interior del 80%) -->
-  <g transform="translate(256 256) scale(0.68) translate(-256 -256)">
-    <path d="M148 296 L132 176 L206 240 L256 142 L306 240 L380 176 L364 296 Z"
-          fill="url(#oro)"/>
-    <rect x="146" y="306" width="220" height="38" rx="10" fill="url(#oro)"/>
-    <circle cx="132" cy="168" r="15" fill="#f0e6d2"/>
-    <circle cx="256" cy="132" r="17" fill="#f0e6d2"/>
-    <circle cx="380" cy="168" r="15" fill="#f0e6d2"/>
-    <text x="256" y="440" text-anchor="middle"
-          font-family="Trebuchet MS, Verdana, Helvetica, Arial, sans-serif"
-          font-size="104" font-weight="bold" letter-spacing="10"
-          fill="#f0e6d2">LAN</text>
+  <rect width="512" height="512" fill="url(#rejilla)"/>
+  <rect width="512" height="512" fill="url(#halo)"/>
+  <!-- Contenido dentro de la zona segura (80 % central) -->
+  <g transform="translate(256 256) scale(0.66) translate(-256 -256)">
+    <path d="M256 54 L430 155 L430 357 L256 458 L82 357 L82 155 Z" fill="none" stroke="#28e5ff" stroke-opacity="0.35" stroke-width="5"/>
+    <rect x="150" y="260" width="60" height="110" rx="4" fill="url(#cian)"/>
+    <rect x="226" y="196" width="60" height="174" rx="4" fill="#ff3cac"/>
+    <rect x="302" y="292" width="60" height="78" rx="4" fill="url(#cian)"/>
+    <path d="M256 140 l12 26 28 3 -21 19 6 28 -25 -14 -25 14 6 -28 -21 -19 28 -3 z" fill="#ff3cac"/>
+    <text x="256" y="428" text-anchor="middle" font-family="Avenir Next, Segoe UI, Helvetica, Arial, sans-serif" font-size="64" font-weight="800" letter-spacing="14" fill="#e8f4ff">LAN</text>
   </g>
 </svg>

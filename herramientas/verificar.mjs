@@ -490,7 +490,7 @@ try {
   })()`);
   comprobar('El tema claro se activa, persiste y actualiza theme-color',
     tema.claro.tema === 'claro' && tema.claro.pressed === 'true' &&
-    tema.claro.guardado === 'claro' && tema.claro.meta === '#eef1f6',
+    tema.claro.guardado === 'claro' && tema.claro.meta === '#f2f6fb',
     `meta ${tema.claro.meta} · texto ${tema.claro.fondoCuerpo}`);
   comprobar('El cambio de tema se anuncia a lectores de pantalla',
     /tema claro/i.test(tema.claro.anuncio), tema.claro.anuncio);
