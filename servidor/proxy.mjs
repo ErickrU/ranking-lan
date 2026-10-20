@@ -835,6 +835,15 @@ function extraerBuild(p) {
   };
 }
 
+/**
+ * Objeto "completo" por rango de id de Data Dragon. match-v5 no trae precios,
+ * pero la numeracion es estable: 1001-1099 componentes basicos (Cinturon,
+ * Pico, Vara, botas basicas), 2003-2140 consumibles, 3340-3364 guardianes,
+ * 3400 placeholder. El resto son objetos terminados, epicos o botas
+ * mejoradas (3006-3047, 3111, 3117, 3158).
+ */
+const esItemCompleto = (id) => id >= 2000 && !(id >= 2003 && id <= 2140) && !(id >= 3340 && id <= 3364) && id !== 3400;
+
 /* --------------------------------------------------------------------------
  * Agregado de builds por campeon y region.
  *
@@ -884,7 +893,10 @@ function registrarBuildsDePartida(region, partida) {
       mapa.set(clave, e);
     };
 
-    for (const item of build.items) if (item) sumar(c.items, item);
+    // Solo objetos completos: ver esCompleto() mas abajo. Los componentes
+    // (Espada Larga, botas basicas...) sesgarian el ranking hacia partidas
+    // cortas y no describen una build.
+    for (const item of build.items) if (item && esItemCompleto(item)) sumar(c.items, item);
     if (build.runas.clave) {
       sumar(c.claves, build.runas.clave, { primario: build.runas.primario, secundario: build.runas.secundario });
     }
@@ -893,13 +905,9 @@ function registrarBuildsDePartida(region, partida) {
     const rol = p.teamPosition || p.individualPosition;
     if (rol) c.roles.set(rol, (c.roles.get(rol) ?? 0) + 1);
 
-    // Conjunto final: solo objetos COMPLETOS. match-v5 no trae precios, pero
-    // Data Dragon numera los componentes basicos (Cinturon, Pico, Vara...) en
-    // 1001-1099 y los consumibles en 2003-2140 y 3340-3364 (guardianes); el
-    // resto son objetos terminados o epicos. Asi una partida que acabo a los
-    // 20 min no cuela medio inventario como "build".
-    const esCompleto = (id) => id >= 3000 && !(id >= 3340 && id <= 3364) && id !== 3400;
-    const finales = build.items.filter((id) => id && esCompleto(id)).sort((a, b) => a - b);
+    // Conjunto final: solo objetos completos, como clave ordenada por id para
+    // que la misma build se cuente igual sin importar el orden de compra.
+    const finales = build.items.filter((id) => id && esItemCompleto(id)).sort((a, b) => a - b);
     if (finales.length >= 3) sumar(c.conjuntos, finales.join(','), { items: finales });
 
     porCampeon.set(p.championId, c);
@@ -924,7 +932,13 @@ function resumenBuild(c) {
     items: top(c.items, 8),
     claves: top(c.claves, 3),
     hechizos: top(c.hechizos, 2, (clave, e) => ({ ids: clave.split('-').map(Number), n: e.n, v: e.v })),
-    conjuntos: top(c.conjuntos, 3, (clave, e) => ({ items: e.items, n: e.n, v: e.v })),
+    // Los items del conjunto se devuelven ordenados por frecuencia global en
+    // el campeon (los nucleo primero), no por id.
+    conjuntos: top(c.conjuntos, 3, (clave, e) => ({
+      items: [...e.items].sort((a, b) => (c.items.get(b)?.n ?? 0) - (c.items.get(a)?.n ?? 0)),
+      n: e.n,
+      v: e.v,
+    })),
   };
 }
 
@@ -1175,7 +1189,7 @@ function buildDemo(region, campeonId) {
   const wr = 46 + al() * 10;
   const pool = [...new Set(Array.from({ length: 10 }, () => elegir(ITEMS_DEMO)))];
   const items = pool.slice(0, 8).map((id, i) => ({ id, n: Math.round(partidas * (0.9 - i * 0.1)), winrate: 44 + al() * 14 }));
-  const conjunto = pool.slice(0, 6).sort((a, b) => a - b);
+  const conjunto = pool.slice(0, 6); // ya en orden de frecuencia
   const clave = elegir(CLAVES_DEMO);
   const clave2 = elegir(CLAVES_DEMO.filter((c) => c !== clave));
   const roles = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'];
