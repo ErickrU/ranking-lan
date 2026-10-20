@@ -388,6 +388,51 @@ try {
     detalleGrupo.consejos >= 1 && detalleGrupo.comparacion >= 2,
     `${detalleGrupo.consejos} consejos · ${detalleGrupo.comparacion} métricas comparadas`);
 
+  /* Secciones estilo op.gg y hitbox del boton de cerrar. */
+  const fichaOpgg = await cdp.evaluar(`(async () => {
+    document.querySelector('#grupo-cuerpo tr').click();
+    for (let i = 0; i < 50; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      if (document.querySelectorAll('#dialogo-extra .consejos__item').length > 0) break;
+    }
+    const q = (s) => document.querySelectorAll(s).length;
+    const r = {
+      stats: q('#dialogo-extra .perfil__stat'),
+      nivel: !!document.querySelector('#dialogo-extra .perfil__nivel'),
+      campeones: q('#dialogo-extra .campeones__item'),
+      roles: q('#dialogo-extra .roles__item'),
+      maestria: q('#dialogo-extra .maestria__item'),
+      retratos: q('#dialogo-extra .retrato'),
+      ordenPerfilAntesDeComparacion: (() => {
+        const secciones = [...document.querySelectorAll('#dialogo-extra .dialogo__seccion')];
+        const iPerfil = secciones.findIndex(s => s.classList.contains('perfil'));
+        const iComp = secciones.findIndex(s => s.querySelector('.comparacion'));
+        return iPerfil !== -1 && iComp !== -1 && iPerfil < iComp;
+      })(),
+    };
+    // Hitbox: el boton de cerrar debe medir >= 44x44 y responder en su ESQUINA
+    // (el clip-path hexagonal anterior la dejaba muerta).
+    const btn = document.getElementById('dialogo').querySelector('.dialogo__cerrar');
+    const caja = btn.getBoundingClientRect();
+    r.hitbox = { w: Math.round(caja.width), h: Math.round(caja.height) };
+    const esquina = document.elementFromPoint(caja.left + 3, caja.top + 3);
+    r.esquinaPulsable = esquina === btn || btn.contains(esquina);
+    // Y cerrar con el boton de verdad cierra.
+    btn.click();
+    await new Promise(r => setTimeout(r, 150));
+    r.cerro = !document.getElementById('dialogo').open;
+    return r;
+  })()`);
+  comprobar('La ficha trae perfil con nivel y rejilla de stats (KDA, WR 7d, KP…)',
+    fichaOpgg.nivel && fichaOpgg.stats >= 4, `${fichaOpgg.stats} stats`);
+  comprobar('Campeones más jugados, roles y maestría',
+    fichaOpgg.campeones >= 1 && fichaOpgg.roles >= 1 && fichaOpgg.maestria >= 1,
+    `${fichaOpgg.campeones} campeones · ${fichaOpgg.roles} roles · ${fichaOpgg.maestria} maestrías · ${fichaOpgg.retratos} retratos`);
+  comprobar('El perfil se muestra antes que la comparación con el grupo', fichaOpgg.ordenPerfilAntesDeComparacion);
+  comprobar('El botón de cerrar mide ≥ 44 px y su esquina es pulsable',
+    fichaOpgg.hitbox.w >= 44 && fichaOpgg.hitbox.h >= 44 && fichaOpgg.esquinaPulsable && fichaOpgg.cerro,
+    `${fichaOpgg.hitbox.w}×${fichaOpgg.hitbox.h} · esquina ${fichaOpgg.esquinaPulsable ? 'ok' : 'MUERTA'} · cerró ${fichaOpgg.cerro}`);
+
   /* Persistencia real: recarga completa de la pagina. */
   await cdp.enviar('Page.navigate', { url: URL_APP + '?vista=grupo' });
   let filasTrasRecarga = 0;

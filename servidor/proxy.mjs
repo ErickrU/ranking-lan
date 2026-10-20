@@ -769,11 +769,14 @@ async function manejarJugador(url, respuesta) {
 }
 
 /* ==========================================================================
-   Endpoint /api/historial · mini historial de partidas (seccion "Mi grupo")
+   Endpoint /api/historial · perfil + historial de partidas (seccion "Mi grupo")
    --------------------------------------------------------------------------
-   Con clave: match-v5 en el ruteo regional de la region (1 llamada por la
-   lista de ids + 1 por partida). Sin clave: historial ficticio determinista.
-   Se cachea por puuid+region durante el mismo TTL del resto.
+   Con clave: summoner-v4 (nivel e icono) + champion-mastery-v4 (top 5) +
+   match-v5 (lista de ids y una llamada por partida) en el ruteo de la region.
+   ~13 llamadas por jugador, cacheadas por puuid+region el TTL habitual.
+   Sin clave: perfil e historial ficticios y deterministas.
+   Los agregados tipo op.gg (KDA, winrate 7 dias, campeones y roles mas
+   jugados) los calcula el CLIENTE a partir de estas partidas: cero llamadas.
    ========================================================================== */
 
 const CAMPEONES_DEMO = [
@@ -782,26 +785,45 @@ const CAMPEONES_DEMO = [
   'Morgana', 'Sett', 'Viego', 'Samira', 'KSante', 'Milio', 'Briar', 'Aurora',
 ];
 
+/** Partidas que trae el historial. Cada una cuesta 1 llamada a match-v5. */
+const PARTIDAS_HISTORIAL = 10;
+
 function historialDemo(semillaTexto) {
   const al = crearAleatorio(hashCadena(`historial|${semillaTexto}`));
-  const cuantas = 5 + Math.floor(al() * 2); // 5 o 6
+  const cuantas = PARTIDAS_HISTORIAL;
   const partidas = [];
   let hace = 1 + al() * 5; // horas desde la ultima partida
+
+  // Un jugador real repite campeones y roles: elegimos una "pool" corta y un
+  // rol principal para que los agregados (campeones mas jugados, barras de
+  // rol) tengan sentido en la demo.
+  const pool = Array.from({ length: 3 }, () => CAMPEONES_DEMO[Math.floor(al() * CAMPEONES_DEMO.length)]);
+  const roles = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'];
+  const rolPrincipal = roles[Math.floor(al() * 5)];
 
   for (let i = 0; i < cuantas; i++) {
     const victoria = al() < 0.52;
     const muertes = 1 + Math.floor(al() * 9);
     const duracionSeg = Math.round((20 + al() * 18) * 60);
+    const k = Math.floor(al() * (victoria ? 14 : 9));
+    const a = Math.floor(al() * 16);
+    const minutos = duracionSeg / 60;
     partidas.push({
-      campeon: CAMPEONES_DEMO[Math.floor(al() * CAMPEONES_DEMO.length)],
+      campeon: al() < 0.75 ? pool[Math.floor(al() * pool.length)] : CAMPEONES_DEMO[Math.floor(al() * CAMPEONES_DEMO.length)],
+      campeonId: null,
       victoria,
-      k: Math.floor(al() * (victoria ? 14 : 9)),
+      k,
       d: victoria ? Math.max(1, muertes - 3) : muertes,
-      a: Math.floor(al() * 16),
-      cs: Math.round((4 + al() * 4.5) * (duracionSeg / 60)),
+      a,
+      cs: Math.round((4 + al() * 4.5) * minutos),
+      oro: Math.round((330 + al() * 150) * minutos),
+      dano: Math.round((500 + al() * 500) * minutos),
+      vision: Math.round((0.6 + al() * 1.4) * minutos),
+      kp: Math.min(1, 0.35 + al() * 0.5),
+      multikill: al() < 0.08 ? 3 : al() < 0.3 ? 2 : 0,
       duracionSeg,
       cola: al() < 0.7 ? 420 : 440,
-      posicion: ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'][Math.floor(al() * 5)],
+      posicion: al() < 0.7 ? rolPrincipal : roles[Math.floor(al() * 5)],
       terminada: new Date(Date.now() - hace * 3600_000).toISOString(),
     });
     hace += 0.7 + al() * 30; // partidas cada vez mas antiguas
@@ -828,23 +850,44 @@ async function manejarHistorial(url, respuesta) {
   }
 
   if (!CONFIG.clave || !puuid) {
+    const al = crearAleatorio(hashCadena(`perfil|${region}|${semilla.toLowerCase()}`));
+    const partidas = historialDemo(`${region}|${semilla.toLowerCase()}`);
+    // Maestria demo coherente con los campeones que aparecen en el historial.
+    const vistos = [...new Set(partidas.map((p) => p.campeon))].slice(0, 5);
     return json(respuesta, 200, {
-      esquema: 1,
+      esquema: 2,
       fuente: 'demo',
       region: region.toUpperCase(),
       actualizado: new Date().toISOString(),
-      partidas: historialDemo(`${region}|${semilla.toLowerCase()}`),
+      perfil: { nivel: 30 + Math.floor(al() * 470), iconoId: Math.floor(al() * 28) },
+      maestria: vistos.map((nombre, i) => ({
+        campeonId: null,
+        campeon: nombre,
+        nivel: Math.max(1, 10 - i * 2 - Math.floor(al() * 2)),
+        puntos: Math.round((420_000 - i * 70_000) * (0.6 + al() * 0.8)),
+      })),
+      partidas,
     }, { 'X-Ranking-Cache': 'demo' });
   }
 
   try {
     const ruteo = REGIONES[region].partidas;
-    const ids = await pedirARiot(
-      `https://${ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/` +
-      `${encodeURIComponent(puuid)}/ids?type=ranked&count=6`,
-    );
 
-    const detalles = await enLotes(ids ?? [], 3, (id) =>
+    // Perfil (summoner-v4) y top de maestria (champion-mastery-v4) van en
+    // paralelo con la lista de ids: 3 llamadas de arranque. Si fallan, el
+    // historial se sirve igual sin ellos.
+    const [perfilBruto, maestriaBruta, ids] = await Promise.all([
+      pedirARiot(`https://${region}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${encodeURIComponent(puuid)}`)
+        .catch(() => null),
+      pedirARiot(`https://${region}.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/${encodeURIComponent(puuid)}/top?count=5`)
+        .catch(() => []),
+      pedirARiot(
+        `https://${ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/` +
+        `${encodeURIComponent(puuid)}/ids?type=ranked&count=${PARTIDAS_HISTORIAL}`,
+      ),
+    ]);
+
+    const detalles = await enLotes(ids ?? [], 5, (id) =>
       pedirARiot(`https://${ruteo}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(id)}`)
         .catch(() => null),
     );
@@ -853,13 +896,25 @@ async function manejarHistorial(url, respuesta) {
     for (const partida of detalles) {
       const yo = partida?.info?.participants?.find((p) => p.puuid === puuid);
       if (!yo) continue;
+
+      // Kill participation: parte de las muertes del equipo en las que participo.
+      const asesinatosEquipo = partida.info.participants
+        .filter((p) => p.teamId === yo.teamId)
+        .reduce((s, p) => s + (p.kills ?? 0), 0);
+
       partidas.push({
         campeon: yo.championName ?? '—',
+        campeonId: yo.championId ?? null,
         victoria: Boolean(yo.win),
         k: yo.kills ?? 0,
         d: yo.deaths ?? 0,
         a: yo.assists ?? 0,
         cs: (yo.totalMinionsKilled ?? 0) + (yo.neutralMinionsKilled ?? 0),
+        oro: yo.goldEarned ?? 0,
+        dano: yo.totalDamageDealtToChampions ?? 0,
+        vision: yo.visionScore ?? 0,
+        kp: asesinatosEquipo > 0 ? ((yo.kills ?? 0) + (yo.assists ?? 0)) / asesinatosEquipo : null,
+        multikill: yo.pentaKills ? 5 : yo.quadraKills ? 4 : yo.tripleKills ? 3 : yo.doubleKills ? 2 : 0,
         duracionSeg: partida.info.gameDuration ?? 0,
         cola: partida.info.queueId ?? 0,
         posicion: yo.teamPosition || yo.individualPosition || '',
@@ -870,10 +925,20 @@ async function manejarHistorial(url, respuesta) {
     }
 
     const valor = {
-      esquema: 1,
+      esquema: 2,
       fuente: 'vivo',
       region: region.toUpperCase(),
       actualizado: new Date().toISOString(),
+      perfil: perfilBruto
+        ? { nivel: perfilBruto.summonerLevel ?? null, iconoId: perfilBruto.profileIconId ?? null }
+        : null,
+      // La API devuelve championId; el nombre se resuelve en cliente con
+      // Data Dragon (estatico, publico y cacheable por el service worker).
+      maestria: (maestriaBruta ?? []).map((m) => ({
+        campeonId: m.championId,
+        nivel: m.championLevel ?? 0,
+        puntos: m.championPoints ?? 0,
+      })),
       partidas,
     };
     cacheListados.set(claveCache, { valor, momento: Date.now() });

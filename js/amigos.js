@@ -12,6 +12,9 @@
 import {
   obtenerJugador,
   obtenerHistorial,
+  resumirHistorial,
+  versionDataDragon,
+  indiceDeCampeones,
   ErrorDatos,
   COLAS,
   REGIONES,
@@ -26,6 +29,10 @@ import {
   textoWinrate,
   claseWinrate,
   nombreRango,
+  renderPerfil,
+  renderCampeones,
+  renderRoles,
+  renderMaestria,
   renderHistorial,
   renderComparacion,
   renderConsejos,
@@ -504,24 +511,43 @@ function generarConsejos(entrada, historial, grupo, riotId) {
   }
 
   if (historial && historial.length > 0) {
-    let derrotasSeguidas = 0;
-    for (const p of historial) {
-      if (p.victoria) break;
-      derrotasSeguidas++;
-    }
-    if (derrotasSeguidas >= 3) {
-      consejos.push(t('consejo.derrotas', { n: derrotasSeguidas }));
+    const resumen = resumirHistorial(historial);
+
+    if (resumen.racha.tipo === 'derrotas' && resumen.racha.n >= 3) {
+      consejos.push(t('consejo.derrotas', { n: resumen.racha.n }));
     }
 
-    const muertesProm = historial.reduce((s, p) => s + p.d, 0) / historial.length;
-    if (muertesProm > 6.5) {
-      consejos.push(t('consejo.muereMenos', { muertes: muertesProm.toFixed(1) }));
+    if (resumen.dPromedio > 6.5) {
+      consejos.push(t('consejo.muereMenos', { muertes: resumen.dPromedio.toFixed(1) }));
     }
 
     const conCs = historial.filter((p) => p.cs > 0 && p.duracionSeg > 0 && p.posicion !== 'UTILITY');
     if (conCs.length > 0) {
       const csMin = conCs.reduce((s, p) => s + p.cs / (p.duracionSeg / 60), 0) / conCs.length;
       if (csMin < 5.5) consejos.push(t('consejo.farmea', { cs: csMin.toFixed(1) }));
+    }
+
+    // Pool: si el campeon mas jugado gana mucho mas que el resto, insistir con el.
+    const [mejor] = resumen.campeones;
+    if (mejor && mejor.partidas >= 3 && mejor.winrate >= 60 && resumen.winrate < mejor.winrate - 10) {
+      consejos.push(t('consejo.campeon', { campeon: mejor.campeon, wr: mejor.winrate.toFixed(0) }));
+    }
+
+    // Dispersion de pool: muchos campeones distintos en pocas partidas.
+    const distintos = new Set(historial.map((p) => p.campeon)).size;
+    if (historial.length >= 8 && distintos >= historial.length * 0.8) {
+      consejos.push(t('consejo.poolAncha', { n: distintos, partidas: historial.length }));
+    }
+
+    // Participacion en asesinatos baja: esta jugando aislado.
+    if (resumen.kpPromedio !== null && resumen.kpPromedio < 45) {
+      consejos.push(t('consejo.kpBajo', { kp: resumen.kpPromedio.toFixed(0) }));
+    }
+
+    // Vision: menos de 0.8/min sin ser soporte es poco.
+    const rolPrincipal = resumen.roles[0]?.rol;
+    if (resumen.visionMin !== null && resumen.visionMin < 0.8 && rolPrincipal !== 'UTILITY') {
+      consejos.push(t('consejo.vision', { v: resumen.visionMin.toFixed(2) }));
     }
   }
 
@@ -565,15 +591,32 @@ async function abrirDetalleDe(riotId, posicion) {
   const marcador = extra.querySelector('.dialogo__cargando');
 
   try {
-    const historial = await obtenerHistorial({
-      puuid: dato.puuid,
-      riotId,
-      region,
-      omitirRed: !navigator.onLine,
-    });
+    // Data Dragon (version e indice de campeones) viaja en paralelo con el
+    // historial; si no llega, las fichas salen sin retratos pero completas.
+    const [historial, version, indice] = await Promise.all([
+      obtenerHistorial({ puuid: dato.puuid, riotId, region, omitirRed: !navigator.onLine }),
+      navigator.onLine ? versionDataDragon().catch(() => null) : Promise.resolve(null),
+      navigator.onLine ? indiceDeCampeones().catch(() => null) : Promise.resolve(null),
+    ]);
     if (!marcador.isConnected) return; // se abrio otra ficha mientras tanto
     marcador.remove();
-    renderHistorial(extra, historial.partidas);
+
+    // Orden estilo op.gg: quien es -> con que gana -> donde juega -> maestria
+    // -> partidas -> contra el grupo -> que hacer.
+    const resumen = resumirHistorial(historial.partidas);
+    const comparacionPrevia = extra.querySelector('.dialogo__seccion'); // la comparacion ya pintada
+    const bloque = document.createDocumentFragment();
+    const temporal = document.createElement('div');
+    renderPerfil(temporal, { perfil: historial.perfil, resumen, version });
+    renderCampeones(temporal, resumen?.campeones, version);
+    renderRoles(temporal, resumen?.roles);
+    renderMaestria(temporal, historial.maestria, version, indice);
+    renderHistorial(temporal, historial.partidas, version);
+    bloque.append(...temporal.childNodes);
+    // Perfil y stats van ANTES de la comparacion con el grupo.
+    if (comparacionPrevia) extra.insertBefore(bloque, comparacionPrevia);
+    else extra.append(bloque);
+
     renderConsejos(extra, generarConsejos(entrada, historial.partidas, grupo, riotId));
   } catch (error) {
     if (!marcador.isConnected) return;

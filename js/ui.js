@@ -6,7 +6,7 @@
  * marcado dependa de datos externos. Todas las cadenas visibles pasan por t().
  */
 
-import { FUENTE, numero, tiempoRelativo, fechaCompleta } from './api.js';
+import { FUENTE, numero, tiempoRelativo, fechaCompleta, urlRetratoCampeon, urlIconoPerfil } from './api.js';
 import { t } from './i18n.js';
 
 const MEDALLAS = ['🥇', '🥈', '🥉'];
@@ -337,8 +337,169 @@ export function abrirDetalle(dialogo, nodos, jugador, contexto) {
  * Historial y consejos (los usa amigos.js dentro del dialogo)
  * ------------------------------------------------------------------ */
 
+/** Retrato de campeon desde Data Dragon, con inicial como respaldo si no carga. */
+function retratoCampeon(campeon, version, clase = 'retrato') {
+  const marco = elemento('span', clase);
+  marco.dataset.inicial = (campeon || '?').slice(0, 1).toUpperCase();
+  if (version && campeon && campeon !== '—') {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    // crossorigin hace la peticion CORS (Data Dragon lo permite): asi la
+    // respuesta no es opaca y el service worker puede guardarla para offline.
+    img.crossOrigin = 'anonymous';
+    img.width = 40; img.height = 40;
+    img.src = urlRetratoCampeon(campeon, version);
+    img.addEventListener('error', () => img.remove(), { once: true });
+    marco.append(img);
+  }
+  return marco;
+}
+
+/** Cabecera de perfil: icono, nivel y resumen de las ultimas partidas. */
+export function renderPerfil(contenedor, { perfil, resumen, version }) {
+  if (!perfil && !resumen) return;
+  const seccion = elemento('section', 'dialogo__seccion perfil');
+
+  if (perfil) {
+    const identidad = elemento('div', 'perfil__identidad');
+    const icono = elemento('span', 'perfil__icono');
+    if (version && perfil.iconoId !== null && perfil.iconoId !== undefined) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.crossOrigin = 'anonymous';
+      img.width = 56; img.height = 56;
+      img.src = urlIconoPerfil(perfil.iconoId, version);
+      img.addEventListener('error', () => img.remove(), { once: true });
+      icono.append(img);
+    }
+    if (perfil.nivel) {
+      icono.append(elemento('span', 'perfil__nivel', numero(perfil.nivel)));
+    }
+    identidad.append(icono);
+    seccion.append(identidad);
+  }
+
+  if (resumen) {
+    const rejilla = elemento('div', 'perfil__stats');
+    const stat = (valor, etiqueta, clase = '') => {
+      const caja = elemento('div', `perfil__stat ${clase}`.trim());
+      caja.append(elemento('strong', 'perfil__valor', valor));
+      caja.append(elemento('span', 'perfil__etiqueta', etiqueta));
+      return caja;
+    };
+
+    const kdaTexto = resumen.kda === Infinity ? '∞' : resumen.kda.toFixed(2);
+    rejilla.append(stat(kdaTexto, t('perfil.kda'), resumen.kda >= 3 ? 'perfil__stat--bien' : resumen.kda < 2 ? 'perfil__stat--mal' : ''));
+    rejilla.append(stat(
+      `${resumen.kPromedio.toFixed(1)} / ${resumen.dPromedio.toFixed(1)} / ${resumen.aPromedio.toFixed(1)}`,
+      t('perfil.promedioKda'),
+    ));
+    if (resumen.recientes7d.winrate !== null) {
+      rejilla.append(stat(
+        `${resumen.recientes7d.winrate.toFixed(0)} %`,
+        t('perfil.wr7d', { n: resumen.recientes7d.partidas }),
+        resumen.recientes7d.winrate >= 55 ? 'perfil__stat--bien' : resumen.recientes7d.winrate < 45 ? 'perfil__stat--mal' : '',
+      ));
+    }
+    if (resumen.kpPromedio !== null) rejilla.append(stat(`${resumen.kpPromedio.toFixed(0)} %`, t('perfil.kp')));
+    if (resumen.csMin !== null) rejilla.append(stat(resumen.csMin.toFixed(1), t('perfil.csMin')));
+    if (resumen.visionMin !== null) rejilla.append(stat(resumen.visionMin.toFixed(2), t('perfil.visionMin')));
+    seccion.append(rejilla);
+
+    if (resumen.racha.n >= 2) {
+      const racha = elemento('p', `perfil__racha perfil__racha--${resumen.racha.tipo}`,
+        t(resumen.racha.tipo === 'victorias' ? 'perfil.rachaV' : 'perfil.rachaD', { n: resumen.racha.n }));
+      seccion.append(racha);
+    }
+  }
+
+  contenedor.append(seccion);
+}
+
+/** Campeones mas jugados en el historial, con winrate y KDA (estilo op.gg). */
+export function renderCampeones(contenedor, campeones, version) {
+  if (!campeones || campeones.length === 0) return;
+  const seccion = elemento('section', 'dialogo__seccion');
+  seccion.append(elemento('h4', 'dialogo__subtitulo', t('campeones.titulo')));
+
+  const lista = elemento('ul', 'campeones');
+  for (const c of campeones) {
+    const item = elemento('li', 'campeones__item');
+    item.append(retratoCampeon(c.campeon, version));
+
+    const centro = elemento('div', 'campeones__centro');
+    centro.append(elemento('strong', 'campeones__nombre', c.campeon));
+    centro.append(elemento('span', 'campeones__meta',
+      `${t('campeones.partidas', { n: c.partidas })} · KDA ${c.kda === Infinity ? '∞' : c.kda.toFixed(2)}`));
+    item.append(centro);
+
+    const wr = elemento('span', `campeones__wr ${c.winrate >= 55 ? 'wr--alto' : c.winrate < 50 ? 'wr--bajo' : ''}`.trim(),
+      `${c.winrate.toFixed(0)} %`);
+    item.append(wr);
+
+    const barra = elemento('span', 'campeones__barra');
+    const relleno = elemento('span');
+    relleno.style.width = `${c.winrate.toFixed(0)}%`;
+    barra.append(relleno);
+    item.append(barra);
+
+    lista.append(item);
+  }
+  seccion.append(lista);
+  contenedor.append(seccion);
+}
+
+/** Reparto de roles del historial como barras horizontales. */
+export function renderRoles(contenedor, roles) {
+  if (!roles || roles.length === 0) return;
+  const seccion = elemento('section', 'dialogo__seccion');
+  seccion.append(elemento('h4', 'dialogo__subtitulo', t('roles.titulo')));
+
+  const lista = elemento('ul', 'roles');
+  for (const r of roles) {
+    const nombre = t(`posicion.${r.rol}`) !== `posicion.${r.rol}` ? t(`posicion.${r.rol}`) : r.rol;
+    const item = elemento('li', 'roles__item');
+    item.append(elemento('span', 'roles__nombre', nombre));
+    const barra = elemento('span', 'roles__barra');
+    const relleno = elemento('span');
+    relleno.style.width = `${r.pct.toFixed(0)}%`;
+    barra.append(relleno);
+    item.append(barra);
+    item.append(elemento('span', 'roles__pct', `${r.pct.toFixed(0)} %`));
+    lista.append(item);
+  }
+  seccion.append(lista);
+  contenedor.append(seccion);
+}
+
+/** Top de maestria de campeones (champion-mastery-v4). */
+export function renderMaestria(contenedor, maestria, version, indice) {
+  if (!maestria || maestria.length === 0) return;
+  const seccion = elemento('section', 'dialogo__seccion');
+  seccion.append(elemento('h4', 'dialogo__subtitulo', t('maestria.titulo')));
+
+  const lista = elemento('ul', 'maestria');
+  for (const m of maestria) {
+    const info = m.campeonId !== null && indice?.get(m.campeonId);
+    const idInterno = info?.id ?? m.campeon ?? null;
+    const nombre = info?.nombre ?? m.campeon ?? '—';
+
+    const item = elemento('li', 'maestria__item');
+    const retrato = retratoCampeon(idInterno, version, 'retrato retrato--sm');
+    retrato.append(elemento('span', 'maestria__nivel', String(m.nivel)));
+    item.append(retrato);
+    item.append(elemento('span', 'maestria__nombre', nombre));
+    item.append(elemento('span', 'maestria__puntos', t('maestria.puntos', { n: numero(m.puntos) })));
+    lista.append(item);
+  }
+  seccion.append(lista);
+  contenedor.append(seccion);
+}
+
 /** Lista de partidas del historial (match-v5) ya normalizadas por el proxy. */
-export function renderHistorial(contenedor, partidas) {
+export function renderHistorial(contenedor, partidas, version) {
   const seccion = elemento('section', 'dialogo__seccion');
   seccion.append(elemento('h4', 'dialogo__subtitulo', t('historial.titulo')));
 
@@ -353,19 +514,27 @@ export function renderHistorial(contenedor, partidas) {
     const item = elemento('li', `historial__partida historial__partida--${p.victoria ? 'v' : 'd'}`);
 
     item.append(elemento('span', 'historial__resultado', p.victoria ? t('historial.v') : t('historial.d')));
-    item.append(elemento('span', 'historial__campeon', p.campeon));
+    item.append(retratoCampeon(p.campeon, version, 'retrato retrato--sm'));
 
+    const centro = elemento('div', 'historial__centro');
+    const linea1 = elemento('div', 'historial__linea');
+    linea1.append(elemento('span', 'historial__campeon', p.campeon));
     const kda = elemento('span', 'historial__kda');
     kda.append(elemento('strong', null, `${p.k}/${p.d}/${p.a}`));
-    item.append(kda);
+    linea1.append(kda);
+    if (p.multikill >= 2) {
+      linea1.append(elemento('span', 'historial__multi', t(`historial.multi${p.multikill}`)));
+    }
+    centro.append(linea1);
 
     const extras = [];
+    if (p.posicion && t(`posicion.${p.posicion}`) !== `posicion.${p.posicion}`) extras.push(t(`posicion.${p.posicion}`));
     if (p.cs) extras.push(`${numero(p.cs)} CS`);
+    if (typeof p.kp === 'number') extras.push(`${Math.round(p.kp * 100)} % KP`);
+    if (p.dano) extras.push(`${numero(Math.round(p.dano / 1000))}k ${t('historial.dano')}`);
     if (p.duracionSeg) extras.push(t('historial.min', { min: Math.round(p.duracionSeg / 60) }));
-    if (p.posicion && t(`posicion.${p.posicion}`) !== `posicion.${p.posicion}`) {
-      extras.push(t(`posicion.${p.posicion}`));
-    }
-    item.append(elemento('span', 'historial__meta', extras.join(' · ')));
+    centro.append(elemento('span', 'historial__meta', extras.join(' · ')));
+    item.append(centro);
 
     if (p.terminada) {
       item.append(elemento('span', 'historial__cuando', tiempoRelativo(p.terminada)));

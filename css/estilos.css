@@ -946,19 +946,36 @@ html[data-tema="claro"] .rango[data-tier="GRANDMASTER"] { color: #b4304a; }
 .sin-dato { color: var(--texto-3); }
 
 .col-quitar { width: 2.6rem; text-align: right; }
+/* Mismo patron que el boton de cerrar: hitbox cuadrada completa, hexagono
+   decorativo en un pseudo-elemento. */
 .btn-quitar {
-  width: 30px; height: 30px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px; height: 40px;
+  margin: -5px 0;
   font: inherit;
-  font-size: 1.05rem;
+  font-size: 1.1rem;
   line-height: 1;
   color: var(--texto-3);
   background: transparent;
-  border: 1px solid var(--linea);
+  border: 0;
   cursor: pointer;
-  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
-  transition: color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s;
 }
-.btn-quitar:hover { color: var(--rojo); border-color: var(--rojo); box-shadow: 0 0 10px rgba(255, 95, 122, 0.35); }
+.btn-quitar::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border: 1px solid var(--linea);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+  z-index: -1;
+}
+.btn-quitar:hover,
+.btn-quitar:focus-visible { color: var(--rojo); }
+.btn-quitar:hover::before,
+.btn-quitar:focus-visible::before { border-color: var(--rojo); background: rgba(255, 95, 122, 0.12); }
 
 /* ==========================================================================
    ACORDEON INFORMATIVO
@@ -1024,17 +1041,43 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
 }
 .dialogo > * { position: relative; }
 
-.dialogo__cerrar-form { float: right; margin: -6px -6px 0 0; }
+/* Boton de cerrar: la zona pulsable es el cuadrado completo de 44 px (objetivo
+   tactil WCAG); el hexagono es solo decorativo y vive en un pseudo-elemento,
+   asi el clip-path NO recorta la hitbox. Posicionado en la esquina para que
+   no dependa del flujo del titulo. */
+.dialogo__cerrar-form {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 2;
+  margin: 0;
+}
 .dialogo__cerrar {
-  font: inherit; font-size: 1.4rem; line-height: 1;
-  width: 36px; height: 36px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px; height: 44px;
+  font: inherit; font-size: 1.5rem; line-height: 1;
   color: var(--texto-2);
   background: transparent;
-  border: 1px solid var(--linea);
+  border: 0;
   cursor: pointer;
-  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  transition: color 0.15s;
 }
-.dialogo__cerrar:hover { color: var(--magenta); border-color: var(--magenta); }
+.dialogo__cerrar::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  transition: border-color 0.15s, background-color 0.15s;
+  z-index: -1;
+}
+.dialogo__cerrar:hover,
+.dialogo__cerrar:focus-visible { color: var(--magenta); }
+.dialogo__cerrar:hover::before,
+.dialogo__cerrar:focus-visible::before { border-color: var(--magenta); background: var(--halo-magenta); }
+
 
 .dialogo__titulo {
   font-size: 1.1rem;
@@ -1042,7 +1085,7 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
   letter-spacing: 0.08em;
   color: var(--cian);
   overflow-wrap: anywhere;
-  padding-right: 8px;
+  padding-right: 52px; /* hueco para el boton de cerrar, que es absoluto */
   text-shadow: 0 0 12px var(--halo-cian);
 }
 .dialogo__sub { font-size: 0.74rem; color: var(--texto-2); margin-top: 4px; letter-spacing: 0.04em; }
@@ -1109,6 +1152,133 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
   padding: 9px 12px 9px 14px;
   background: var(--halo-magenta);
   border-left: 3px solid var(--magenta);
+}
+
+/* Retratos de campeon (Data Dragon) con inicial de respaldo --------------- */
+.retrato {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 40px; height: 40px;
+  flex: none;
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--texto-3);
+  overflow: hidden;
+}
+.retrato::before { content: attr(data-inicial); }
+.retrato img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scale(1.12); }
+.retrato--sm { width: 32px; height: 32px; font-size: 0.75rem; }
+
+/* Perfil: icono con nivel + rejilla de stats ----------------------------- */
+.perfil { display: grid; gap: 12px; }
+.perfil__identidad { display: flex; align-items: center; gap: 12px; }
+.perfil__icono {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px; height: 56px;
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea-fuerte);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  overflow: hidden;
+}
+.perfil__icono img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.perfil__nivel {
+  position: absolute;
+  bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--sobre-primario);
+  background: var(--cian);
+}
+.perfil__stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.perfil__stat {
+  display: grid;
+  gap: 2px;
+  padding: 9px 8px;
+  text-align: center;
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea);
+  border-top: 2px solid var(--linea-fuerte);
+}
+.perfil__stat--bien { border-top-color: var(--verde); }
+.perfil__stat--mal { border-top-color: var(--rojo); }
+.perfil__valor { font-family: var(--mono); font-size: 0.92rem; color: var(--texto); font-variant-numeric: tabular-nums; }
+.perfil__stat--bien .perfil__valor { color: var(--verde); }
+.perfil__stat--mal .perfil__valor { color: var(--rojo); }
+.perfil__etiqueta { font-size: 0.58rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--texto-3); font-weight: 700; }
+.perfil__racha { font-size: 0.8rem; font-weight: 700; padding: 8px 12px; border-left: 3px solid; background: var(--superficie-suave); }
+.perfil__racha--victorias { color: var(--verde); border-color: var(--verde); }
+.perfil__racha--derrotas { color: var(--cian); border-color: var(--cian); }
+
+/* Campeones mas jugados ----------------------------------------------------- */
+.campeones { list-style: none; display: grid; gap: 8px; }
+.campeones__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: 'retrato centro wr' 'retrato barra barra';
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 5px;
+  padding: 8px 10px;
+  background: var(--superficie-suave);
+  border-left: 3px solid var(--linea-fuerte);
+}
+.campeones__item .retrato { grid-area: retrato; }
+.campeones__centro { grid-area: centro; display: grid; min-width: 0; }
+.campeones__nombre { font-size: 0.86rem; }
+.campeones__meta { font-size: 0.7rem; color: var(--texto-2); font-family: var(--mono); }
+.campeones__wr { grid-area: wr; font-family: var(--mono); font-weight: 700; font-size: 0.9rem; }
+.campeones__barra { grid-area: barra; height: 3px; background: rgba(255, 95, 122, 0.3); }
+.campeones__barra > span { display: block; height: 100%; background: var(--verde); box-shadow: 0 0 6px var(--verde); }
+
+/* Roles ---------------------------------------------------------------------- */
+.roles { list-style: none; display: grid; gap: 7px; }
+.roles__item { display: grid; grid-template-columns: 5.5em 1fr 3.2em; align-items: center; gap: 10px; font-size: 0.78rem; }
+.roles__nombre { color: var(--texto-2); font-weight: 700; letter-spacing: 0.04em; }
+.roles__barra { height: 6px; background: var(--superficie-suave); border: 1px solid var(--linea); }
+.roles__barra > span { display: block; height: 100%; background: var(--cian); box-shadow: 0 0 8px var(--halo-cian); }
+.roles__pct { text-align: right; font-family: var(--mono); font-weight: 700; color: var(--cian); }
+
+/* Maestria -------------------------------------------------------------------- */
+.maestria { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.maestria__item { display: grid; grid-template-columns: auto 1fr; grid-template-areas: 'r nombre' 'r puntos'; column-gap: 9px; align-items: center; padding: 7px 9px; background: var(--superficie-suave); border: 1px solid var(--linea); }
+.maestria__item .retrato { grid-area: r; }
+.maestria__nivel {
+  position: absolute;
+  bottom: -1px; right: -1px;
+  padding: 0 5px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: var(--sobre-primario);
+  background: var(--magenta);
+}
+.maestria__nombre { grid-area: nombre; font-size: 0.8rem; font-weight: 700; }
+.maestria__puntos { grid-area: puntos; font-size: 0.68rem; color: var(--texto-2); font-family: var(--mono); }
+
+/* Historial: ahora con retrato y dos lineas --------------------------------- */
+.historial__centro { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.historial__linea { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.historial__multi {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  color: var(--magenta);
+  border: 1px solid var(--magenta);
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
 }
 
 .ayuda__lista { display: grid; gap: 12px; margin: 16px 0 0 18px; font-size: 0.86rem; line-height: 1.55; color: var(--texto-2); }

@@ -13,10 +13,11 @@
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
-const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS]);
+const CACHE_DDRAGON = 'ranking-lan-ddragon-v1'; // retratos e indice de campeones
+const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS, CACHE_DDRAGON]);
 
 /** App shell: lo minimo para que la app abra sin red. */
 const PRECACHE = [
@@ -197,6 +198,15 @@ self.addEventListener('fetch', (evento) => {
   if (peticion.method !== 'GET') return;
 
   const url = new URL(peticion.url);
+
+  // Data Dragon (retratos de campeon, iconos, indice de campeones): assets
+  // estaticos y publicos de Riot, inmutables por version de parche. Se sirven
+  // cache-first para que las fichas del grupo funcionen offline tras la
+  // primera visita. Es el UNICO origen externo que toca el service worker.
+  if (url.origin === 'https://ddragon.leagueoflegends.com') {
+    evento.respondWith(cachePrimero(peticion, CACHE_DDRAGON));
+    return;
+  }
 
   // Dejamos pasar lo que no es de nuestro origen (p. ej. enlaces externos).
   if (url.origin !== self.location.origin) return;

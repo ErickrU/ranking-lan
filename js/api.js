@@ -384,7 +384,7 @@ export async function obtenerHistorial({ puuid, riotId, region = 'la1', omitirRe
       const documento = await respuesta.json();
       let fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.VIVO;
       if (servidaDeCache && fuente !== FUENTE.DEMO) fuente = FUENTE.CACHE;
-      return { fuente, partidas: documento.partidas ?? [] };
+      return normalizarHistorial(documento, fuente);
     } catch (error) {
       problemas.push(error.message);
     }
@@ -395,11 +395,142 @@ export async function obtenerHistorial({ puuid, riotId, region = 'la1', omitirRe
   if (guardada) {
     const documento = await guardada.json();
     const fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.CACHE;
-    return { fuente, partidas: documento.partidas ?? [] };
+    return normalizarHistorial(documento, fuente);
   }
 
   throw new ErrorDatos(problemas[0] ?? 'Sin conexión y sin historial guardado');
 }
+
+function normalizarHistorial(documento, fuente) {
+  return {
+    fuente,
+    perfil: documento.perfil ?? null,
+    maestria: documento.maestria ?? [],
+    partidas: documento.partidas ?? [],
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Agregados estilo op.gg / u.gg, calculados en cliente (cero llamadas)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Resume un historial: KDA global, winrate de los ultimos 7 dias, racha
+ * actual, campeones mas jugados (con winrate) y reparto de roles.
+ */
+export function resumirHistorial(partidas) {
+  if (!partidas || partidas.length === 0) return null;
+
+  const suma = (fn) => partidas.reduce((s, p) => s + fn(p), 0);
+  const k = suma((p) => p.k), d = suma((p) => p.d), a = suma((p) => p.a);
+  const victorias = partidas.filter((p) => p.victoria).length;
+
+  const hace7d = Date.now() - 7 * 86400_000;
+  const recientes = partidas.filter((p) => p.terminada && new Date(p.terminada).getTime() >= hace7d);
+  const victorias7d = recientes.filter((p) => p.victoria).length;
+
+  // Racha: partidas consecutivas con el mismo resultado desde la mas reciente.
+  let racha = 0;
+  const primera = partidas[0]?.victoria;
+  for (const p of partidas) {
+    if (p.victoria !== primera) break;
+    racha++;
+  }
+
+  const porCampeon = new Map();
+  for (const p of partidas) {
+    const c = porCampeon.get(p.campeon) ?? { campeon: p.campeon, campeonId: p.campeonId ?? null, partidas: 0, victorias: 0, k: 0, d: 0, a: 0 };
+    c.partidas++;
+    if (p.victoria) c.victorias++;
+    c.k += p.k; c.d += p.d; c.a += p.a;
+    porCampeon.set(p.campeon, c);
+  }
+  const campeones = [...porCampeon.values()]
+    .sort((x, y) => y.partidas - x.partidas || y.victorias - x.victorias)
+    .slice(0, 4)
+    .map((c) => ({ ...c, winrate: (c.victorias / c.partidas) * 100, kda: c.d === 0 ? Infinity : (c.k + c.a) / c.d }));
+
+  const porRol = new Map();
+  for (const p of partidas) {
+    if (!p.posicion) continue;
+    porRol.set(p.posicion, (porRol.get(p.posicion) ?? 0) + 1);
+  }
+  const conRol = [...porRol.values()].reduce((s, n) => s + n, 0);
+  const roles = [...porRol.entries()]
+    .sort((x, y) => y[1] - x[1])
+    .map(([rol, n]) => ({ rol, partidas: n, pct: conRol ? (n / conRol) * 100 : 0 }));
+
+  const conKp = partidas.filter((p) => typeof p.kp === 'number');
+  const conDuracion = partidas.filter((p) => p.duracionSeg > 0);
+
+  return {
+    total: partidas.length,
+    victorias,
+    derrotas: partidas.length - victorias,
+    winrate: (victorias / partidas.length) * 100,
+    kda: d === 0 ? Infinity : (k + a) / d,
+    kPromedio: k / partidas.length,
+    dPromedio: d / partidas.length,
+    aPromedio: a / partidas.length,
+    kpPromedio: conKp.length ? (conKp.reduce((s, p) => s + p.kp, 0) / conKp.length) * 100 : null,
+    csMin: conDuracion.length
+      ? conDuracion.reduce((s, p) => s + p.cs / (p.duracionSeg / 60), 0) / conDuracion.length
+      : null,
+    visionMin: conDuracion.length
+      ? conDuracion.reduce((s, p) => s + (p.vision ?? 0) / (p.duracionSeg / 60), 0) / conDuracion.length
+      : null,
+    recientes7d: { partidas: recientes.length, victorias: victorias7d, winrate: recientes.length ? (victorias7d / recientes.length) * 100 : null },
+    racha: { tipo: primera ? 'victorias' : 'derrotas', n: racha },
+    campeones,
+    roles,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Data Dragon: assets estaticos y publicos de Riot (sin clave, con CORS)
+ * ------------------------------------------------------------------ */
+
+const DDRAGON = 'https://ddragon.leagueoflegends.com';
+let versionDdragon = null;
+let indiceCampeones = null; // championId -> { id: 'Ahri', nombre: 'Ahri' }
+
+/** Version actual del parche (cacheada en Cache Storage por el SW). */
+export async function versionDataDragon() {
+  if (versionDdragon) return versionDdragon;
+  try {
+    const r = await fetchConLimite(`${DDRAGON}/api/versions.json`, 5000);
+    const lista = await r.json();
+    versionDdragon = lista[0];
+  } catch {
+    versionDdragon = '14.1.1'; // respaldo razonable: las imagenes existen igual
+  }
+  return versionDdragon;
+}
+
+/** Indice championId -> nombre, para la maestria (la API solo da ids). */
+export async function indiceDeCampeones() {
+  if (indiceCampeones) return indiceCampeones;
+  try {
+    const v = await versionDataDragon();
+    const r = await fetchConLimite(`${DDRAGON}/cdn/${v}/data/${localeActual() === 'es-MX' ? 'es_MX' : 'en_US'}/champion.json`, 8000);
+    const datos = await r.json();
+    indiceCampeones = new Map();
+    for (const c of Object.values(datos.data)) {
+      indiceCampeones.set(Number(c.key), { id: c.id, nombre: c.name });
+    }
+  } catch {
+    indiceCampeones = new Map();
+  }
+  return indiceCampeones;
+}
+
+/** URL del retrato cuadrado de un campeon por su id interno ('Ahri', 'KSante'). */
+export const urlRetratoCampeon = (idInterno, version) =>
+  `${DDRAGON}/cdn/${version}/img/champion/${encodeURIComponent(idInterno)}.png`;
+
+/** URL del icono de perfil de invocador. */
+export const urlIconoPerfil = (iconoId, version) =>
+  `${DDRAGON}/cdn/${version}/img/profileicon/${iconoId}.png`;
 
 /* ------------------------------------------------------------------ *
  * Orden de rangos
