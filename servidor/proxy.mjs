@@ -168,11 +168,11 @@ function usoActual() {
  * ventana no dan para responder pronto, falla rapido para que el cliente
  * caiga a su cache en lugar de colgar la peticion HTTP.
  */
-async function esperarTurno(reserva = 0) {
+async function esperarTurno(reserva = 0, esperarSiLleno = true) {
   for (;;) {
     const castigoMs = esperarHasta - Date.now();
     if (castigoMs > 0) {
-      if (reserva === 0 && castigoMs > 2500) {
+      if ((reserva === 0 || !esperarSiLleno) && castigoMs > 2500) {
         throw new ErrorRiot(
           `Límite de peticiones activo, reintenta en ${Math.ceil(castigoMs / 1000)} s`,
           429,
@@ -191,6 +191,11 @@ async function esperarTurno(reserva = 0) {
     }
     if (reserva === 0 && ventana > LIMITE_VENTANA - 4) {
       throw new ErrorRiot('Presupuesto de peticiones agotado, reintenta en un momento', 429, 20);
+    }
+    // Trafico con reserva que NO quiere esperar (builds bajo demanda): si su
+    // cupo esta lleno, falla ya para que el llamador sirva lo que tenga.
+    if (reserva > 0 && !esperarSiLleno && ventana > LIMITE_VENTANA - 2 - reserva) {
+      throw new ErrorRiot('Sin presupuesto libre para enriquecer', 429, 10);
     }
     await new Promise((r) => setTimeout(r, segundo > LIMITE_SEGUNDO - 4 ? 150 : 1200));
   }
@@ -219,7 +224,9 @@ function sincronizarConCabeceras(respuesta) {
 async function pedirARiot(url, opciones = {}) {
   const { reintento = true, reserva = 0 } = opciones;
 
-  await esperarTurno(reserva);
+  // La cola de nombres (reintento=true por defecto) espera su turno; el
+  // enriquecimiento de builds (reintento=false) prefiere fallar a bloquear.
+  await esperarTurno(reserva, reintento);
 
   const respuesta = await fetch(url, {
     headers: { 'X-Riot-Token': CONFIG.clave, Accept: 'application/json' },
@@ -878,11 +885,14 @@ function registrarBuildsDePartida(region, partida) {
     const rol = p.teamPosition || p.individualPosition;
     if (rol) c.roles.set(rol, (c.roles.get(rol) ?? 0) + 1);
 
-    // Conjunto final: los items de >= 2000 de oro no se conocen aqui (no hay
-    // precios en match-v5), asi que se toma la build completa de 6 huecos
-    // ordenada; en cliente se filtran consumibles con Data Dragon.
-    const finales = build.items.filter(Boolean).sort((a, b) => a - b);
-    if (finales.length >= 4) sumar(c.conjuntos, finales.join(','), { items: finales });
+    // Conjunto final: solo objetos COMPLETOS. match-v5 no trae precios, pero
+    // Data Dragon numera los componentes basicos (Cinturon, Pico, Vara...) en
+    // 1001-1099 y los consumibles en 2003-2140 y 3340-3364 (guardianes); el
+    // resto son objetos terminados o epicos. Asi una partida que acabo a los
+    // 20 min no cuela medio inventario como "build".
+    const esCompleto = (id) => id >= 3000 && !(id >= 3340 && id <= 3364) && id !== 3400;
+    const finales = build.items.filter((id) => id && esCompleto(id)).sort((a, b) => a - b);
+    if (finales.length >= 3) sumar(c.conjuntos, finales.join(','), { items: finales });
 
     porCampeon.set(p.championId, c);
   }
@@ -1097,7 +1107,11 @@ async function manejarHistorial(url, respuesta) {
    ========================================================================== */
 
 const MIN_PARTIDAS_BUILD = 8;        // muestra minima antes de dejar de buscar
-const PRESUPUESTO_LLAMADAS_BUILD = 28; // tope por peticion (~1/4 de la ventana)
+const PRESUPUESTO_LLAMADAS_BUILD = 20; // tope por peticion (1/5 de la ventana)
+/* El enriquecimiento pide turno con reserva: nunca consume los ultimos huecos
+   de la ventana, que quedan para listados, grupo e historiales. Si no hay
+   presupuesto libre, simplemente devuelve la muestra que haya. */
+const RESERVA_BUILDS = 30;
 
 async function enriquecerBuilds(region, campeonId) {
   const ladder = cacheListados.get(`${region}|RANKED_SOLO_5x5|CHALLENGER|I`)?.valor
@@ -1115,10 +1129,15 @@ async function enriquecerBuilds(region, campeonId) {
       if (!jugador.puuid) continue;
       break;
     }
+    // Sin presupuesto libre (descontada la reserva), no se enriquece: el
+    // usuario ve la muestra actual y la nota de "muestra pequena".
+    if (usoActual().ventana > LIMITE_VENTANA - RESERVA_BUILDS) break;
+
     let ids;
     try {
       ids = await pedirARiot(
         `https://${ruteo}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(jugador.puuid)}/ids?type=ranked&count=5`,
+        { reserva: RESERVA_BUILDS, reintento: false },
       );
       llamadas++;
     } catch { break; }
@@ -1126,8 +1145,12 @@ async function enriquecerBuilds(region, campeonId) {
     const nuevas = (ids ?? []).filter((id) => !partidasVistas.has(id));
     for (const id of nuevas) {
       if (llamadas >= PRESUPUESTO_LLAMADAS_BUILD) break;
+      if (usoActual().ventana > LIMITE_VENTANA - RESERVA_BUILDS) break;
       try {
-        const partida = await pedirARiot(`https://${ruteo}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(id)}`);
+        const partida = await pedirARiot(
+          `https://${ruteo}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(id)}`,
+          { reserva: RESERVA_BUILDS, reintento: false },
+        );
         llamadas++;
         registrarBuildsDePartida(region, partida);
       } catch { break; }
