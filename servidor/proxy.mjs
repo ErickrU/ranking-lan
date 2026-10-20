@@ -144,7 +144,15 @@ class ErrorRiot extends Error {
  * -------------------------------------------------------------------------- */
 const LIMITE_SEGUNDO = 20;
 const LIMITE_VENTANA = 100;      // por 120 s
-const RESERVA_INTERACTIVA = 22;  // huecos de la ventana reservados a usuarios
+
+/* Jerarquia de prioridad = cuantos huecos de la ventana deja libres cada tipo
+   de trafico. Un numero mayor cede antes:
+     0  usuarios (listados, jugador del grupo, historial): usan todo
+     14 builds bajo demanda: alguien esta esperando la ficha, pero es opcional
+     34 cola de nombres de fondo: nadie la espera, va con lo que sobra
+   Asi la cola de nombres NUNCA bloquea a las builds ni a los usuarios. */
+const RESERVA_BUILDS = 14;
+const RESERVA_INTERACTIVA = 34;  // (nombre historico) reserva de la cola de nombres
 
 /** Marcas de tiempo (ms) de las peticiones enviadas, en orden cronologico. */
 const marcasPeticiones = [];
@@ -1108,10 +1116,9 @@ async function manejarHistorial(url, respuesta) {
 
 const MIN_PARTIDAS_BUILD = 8;        // muestra minima antes de dejar de buscar
 const PRESUPUESTO_LLAMADAS_BUILD = 20; // tope por peticion (1/5 de la ventana)
-/* El enriquecimiento pide turno con reserva: nunca consume los ultimos huecos
-   de la ventana, que quedan para listados, grupo e historiales. Si no hay
-   presupuesto libre, simplemente devuelve la muestra que haya. */
-const RESERVA_BUILDS = 30;
+/* El enriquecimiento pide turno con RESERVA_BUILDS (declarada junto al
+   presupuesto): deja 14 huecos a los usuarios y falla rapido si no hay
+   cupo, devolviendo la muestra que exista. */
 
 async function enriquecerBuilds(region, campeonId) {
   const ladder = cacheListados.get(`${region}|RANKED_SOLO_5x5|CHALLENGER|I`)?.valor
@@ -1336,7 +1343,8 @@ const servidor = createServer(async (peticion, respuesta) => {
           return {
             usadoUltimoSegundo: `${segundo}/${LIMITE_SEGUNDO}`,
             usadoVentana2min: `${ventana}/${LIMITE_VENTANA}`,
-            reservaInteractiva: RESERVA_INTERACTIVA,
+            reservaBuilds: RESERVA_BUILDS,
+            reservaNombres: RESERVA_INTERACTIVA,
           };
         })(),
       });
@@ -1388,7 +1396,7 @@ servidor.listen(CONFIG.puerto, () => {
   console.log(linea);
   if (CONFIG.clave) {
     console.log(`  Clave de Riot detectada · plataforma ${CONFIG.plataforma} · top ${CONFIG.top}`);
-    console.log(`  Presupuesto: ${LIMITE_SEGUNDO}/s y ${LIMITE_VENTANA}/2 min · reserva interactiva ${RESERVA_INTERACTIVA}`);
+    console.log(`  Presupuesto: ${LIMITE_SEGUNDO}/s y ${LIMITE_VENTANA}/2 min · reservas: builds ${RESERVA_BUILDS}, nombres ${RESERVA_INTERACTIVA}`);
   } else {
     console.log('  Sin RIOT_API_KEY: se sirven datos de DEMOSTRACIÓN.');
     console.log('  Para datos reales:  RIOT_API_KEY=RGAPI-... node servidor/proxy.mjs');

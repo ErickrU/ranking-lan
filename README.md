@@ -138,8 +138,10 @@ exacto de ambas ventanas (`esperarTurno`), sincronizado con las cabeceras
 `X-App-Rate-Limit-Count` de Riot:
 
 - los primeros `TOP_JUGADORES` nombres se resuelven al momento (a ~18/s);
-- el resto lo drena una cola en segundo plano que consume **todo el presupuesto libre**,
-  pero deja siempre una reserva de ~22 peticiones para el tráfico interactivo;
+- el resto lo drena una cola en segundo plano con la **prioridad más baja**: deja 34 huecos
+  libres de la ventana, que se reparten entre las builds bajo demanda (reserva 14) y los
+  usuarios (sin reserva: usan todo). Así resolver el nombre #400 del ladder nunca bloquea
+  a alguien que espera una ficha;
 - al arrancar, el proxy **precalienta** la élite de la región por defecto, así el primer
   visitante no paga el arranque en frío;
 - los listados cacheados se **rehidratan al servirse**: los nombres que la cola ya resolvió
