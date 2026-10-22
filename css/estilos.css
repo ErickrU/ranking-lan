@@ -254,7 +254,12 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
   align-items: center;
   gap: 10px;
   min-height: var(--barra-alto);
-  max-width: var(--ancho-max);
+  /* Tan ancha como la columna de contenido y, si los seis controles con
+     etiqueta no caben junto a la marca, crece hasta el borde de la ventana
+     en vez de dejar que los controles se salgan del cristal. */
+  width: fit-content;
+  min-width: min(100%, var(--ancho-max));
+  max-width: 100%;
   margin-inline: auto;
   padding: 6px 14px;
   background: var(--cristal);
@@ -275,7 +280,9 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
   pointer-events: none;
 }
 
-.cabecera__marca { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; min-width: 0; }
+/* La marca puede encogerse (el subtitulo ya recorta con puntos suspensivos):
+   antes que recortar un control, se acorta el subtitulo. */
+.cabecera__marca { display: flex; align-items: center; gap: 12px; flex: 0 1 auto; min-width: 0; }
 
 /* Logo en una cápsula hexagonal con halo. */
 .cabecera__logo {
@@ -337,17 +344,17 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 44px;
   min-height: 44px;
-  padding: 8px 10px;
+  padding: 8px 7px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--texto-2);
   font: inherit;
   font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -395,6 +402,7 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
   top: var(--titlebar-y);
   left: var(--titlebar-x);
   width: var(--titlebar-width);
+  min-width: 0;
   max-width: none;
   height: var(--titlebar-height);
   min-height: var(--titlebar-height);
@@ -558,6 +566,18 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
   color: var(--cian);
   border-color: var(--cian);
   box-shadow: inset 0 -3px 0 var(--cian), var(--brillo-cian);
+}
+/* En pantallas angostas las tres pestanas no caben en una fila. Antes
+   ensanchaban la pagina (447 px en un movil de 412) y dejaban una franja
+   fuera de las capas fijas, panel de widgets incluido. Ahora la fila se
+   desplaza en horizontal (con aire vertical para no recortar el halo) y en
+   moviles se compactan para que las tres quepan sin desplazamiento. */
+@media (max-width: 600px) {
+  .pestanas { overflow-x: auto; padding-block: 20px; margin-block: -6px -20px; }
+}
+@media (max-width: 430px) {
+  .pestana { padding-inline: 10px; }
+  .pestana__icono { display: none; }
 }
 
 /* ==========================================================================
@@ -1454,8 +1474,10 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
   .tabla { font-size: 0.9rem; }
 }
 
-/* Barra de titulo: progresion responsive */
-@media (max-width: 900px) {
+/* Barra de titulo: progresion responsive. Por debajo de 1260 px los seis
+   controles con etiqueta ya no caben junto a la marca: quedan solo los iconos
+   (como en el modo Window Controls Overlay). */
+@media (max-width: 1259px) {
   .control-ventana span { display: none; }
   .control-ventana { width: 42px; min-width: 42px; padding-inline: 0; }
   .cabecera__separador { margin-inline: 4px 2px; }
@@ -1495,4 +1517,444 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
 /* Modo instalado sin WCO: aire extra bajo la barra de estado del sistema */
 @media (display-mode: standalone) {
   body:not(.wco-visible) .cabecera { padding-top: calc(6px + env(safe-area-inset-top, 0px)); }
+}
+
+/* ==========================================================================
+   PANEL DE WIDGETS (simulación del Widgets Board de Windows 11)
+   --------------------------------------------------------------------------
+   Hoja lateral izquierda de cristal con una rejilla de tarjetas: la misma
+   composicion que el panel de Windows 11 (cabecera con icono, boton
+   "+ Agregar widget", tarjetas de 320 px con cabecera propia y selector de
+   widgets), traducida al lenguaje HUD de la app: biseles en vez de radios,
+   cian como acento, lineas finas y numeros monoespaciados. Las clases ac-*
+   pintan los elementos de la Adaptive Card del widget (js/widgets.js).
+   ========================================================================== */
+.pw-panel {
+  position: fixed;
+  inset: 0 auto 0 0;
+  margin: 0;
+  width: min(760px, 100vw);
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--linea-fuerte);
+  color: var(--texto);
+  background:
+    radial-gradient(60% 40% at 0% 0%, var(--halo-cian), transparent 70%),
+    var(--cristal);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  box-shadow: 24px 0 60px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* El <dialog> cerrado sigue siendo display:none (hoja del navegador). */
+.pw-panel[open] {
+  display: flex;
+  flex-direction: column;
+  animation: pw-entrar 0.18s ease-out;
+}
+@keyframes pw-entrar {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+/* En modo WCO el panel se superpone a la barra arrastrable: nada aqui arrastra. */
+.pw-panel * { -webkit-app-region: no-drag; app-region: no-drag; }
+.pw-panel::backdrop {
+  background: rgba(3, 5, 10, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+html[data-tema="claro"] .pw-panel::backdrop { background: rgba(13, 23, 38, 0.4); }
+/* El bisel de botones y tarjetas recorta el contorno exterior de foco: va por dentro. */
+.pw-panel :is(a, button, [tabindex]):focus-visible { outline-offset: -3px; }
+
+/* ---- Cabecera ------------------------------------------------------------ */
+.pw-cabecera {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  min-height: 56px;
+  padding: 8px 12px 8px 16px;
+  background: var(--superficie);
+  border-bottom: 1px solid var(--linea);
+}
+.pw-cabecera::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--cian), transparent 30%, transparent 70%, var(--magenta));
+  opacity: 0.8;
+  pointer-events: none;
+}
+.pw-icono {
+  flex: none;
+  padding: 2px;
+  background: var(--superficie-2);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  filter: drop-shadow(0 0 8px var(--halo-cian));
+}
+.pw-titulo {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--texto);
+  text-shadow: 0 0 12px var(--halo-cian);
+}
+
+/* Boton de cerrar: cuadrado real de 44 px (la esquina tambien pulsa); el
+   hexagono es decorativo y vive en ::before, como .dialogo__cerrar. */
+.pw-cerrar {
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px; height: 44px;
+  margin-left: auto;
+  font: inherit; font-size: 1.5rem; line-height: 1;
+  color: var(--texto-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.pw-cerrar::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  transition: border-color 0.15s, background-color 0.15s;
+  z-index: -1;
+}
+.pw-cerrar:hover,
+.pw-cerrar:focus-visible { color: var(--magenta); }
+.pw-cerrar:hover::before,
+.pw-cerrar:focus-visible::before { border-color: var(--magenta); background: var(--halo-magenta); }
+
+/* ---- Vistas ---------------------------------------------------------------- */
+.pw-vista {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.pw-tablero, .pw-agregar { padding: 16px; }
+
+.pw-herramientas { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+
+.pw-rejilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 320px);
+  justify-content: center;
+  gap: 16px;
+}
+
+/* Botones del panel: mismo lenguaje que .boton (bisel, mayusculas, cian). */
+.pw-agregar-boton, .pw-volver, .pw-opcion__agregar, .ac-accion {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  color: var(--texto);
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea-fuerte);
+  cursor: pointer;
+  --b: var(--bisel-sm);
+  clip-path: polygon(
+    var(--b) 0, 100% 0, 100% calc(100% - var(--b)),
+    calc(100% - var(--b)) 100%, 0 100%, 0 var(--b)
+  );
+  transition: background-color 0.18s, color 0.18s, box-shadow 0.18s;
+}
+.pw-agregar-boton:hover:not(:disabled), .pw-volver:hover:not(:disabled),
+.pw-opcion__agregar:hover:not(:disabled), .ac-accion:hover:not(:disabled) {
+  background: var(--halo-cian);
+  color: var(--cian);
+  box-shadow: var(--brillo-cian);
+}
+.pw-agregar-boton:disabled, .pw-volver:disabled, .pw-opcion__agregar:disabled, .ac-accion:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pw-agregar-boton { color: var(--cian); }
+
+/* ---- Tarjeta de widget ----------------------------------------------------- */
+.pw-tarjeta {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--texto);
+  background: var(--superficie-2);
+  border: 1px solid var(--linea);
+  --b: var(--bisel-sm);
+  clip-path: polygon(
+    var(--b) 0, 100% 0, 100% calc(100% - var(--b)),
+    calc(100% - var(--b)) 100%, 0 100%, 0 var(--b)
+  );
+}
+/* Rejilla tenue, como en las fichas. */
+.pw-tarjeta::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--linea) 1px, transparent 1px),
+    linear-gradient(90deg, var(--linea) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.25;
+  mask-image: linear-gradient(180deg, #000, transparent 60%);
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 60%);
+}
+.pw-tarjeta > * { position: relative; }
+.pw-tarjeta:focus-visible { outline: 2px solid var(--cian); outline-offset: -3px; }
+
+.pw-tarjeta__cabecera {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 4px 4px 12px;
+  background: var(--superficie-suave);
+  border-bottom: 1px solid var(--linea);
+}
+.pw-tarjeta__icono {
+  flex: none;
+  width: 20px; height: 20px;
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+.pw-tarjeta__nombre {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--texto-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pw-quitar {
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px; height: 32px;
+  font: inherit; font-size: 1.2rem; line-height: 1;
+  color: var(--texto-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.pw-quitar::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px solid transparent;
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  transition: border-color 0.15s, background-color 0.15s;
+  z-index: -1;
+}
+.pw-quitar:hover,
+.pw-quitar:focus-visible { color: var(--magenta); }
+.pw-quitar:hover::before,
+.pw-quitar:focus-visible::before { border-color: var(--magenta); background: var(--halo-magenta); }
+
+.pw-tarjeta__cuerpo { padding: 12px; }
+.pw-tarjeta__cuerpo[aria-busy="true"] .ac-accion { opacity: 0.55; cursor: progress; }
+
+.pw-estado { margin: 0; font-family: var(--mono); font-size: 0.82rem; color: var(--texto-2); }
+.pw-estado::before { content: '> '; color: var(--cian); }
+.pw-estado--error, .pw-estado--error::before { color: var(--rojo); }
+
+.pw-vacio {
+  max-width: 420px;
+  margin: 28px auto 0;
+  padding: 18px;
+  text-align: center;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--texto-2);
+  border: 1px dashed var(--linea-fuerte);
+}
+
+/* ---- Selector "Agregar widgets" ------------------------------------------- */
+.pw-agregar__titulo {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cian);
+  text-shadow: 0 0 12px var(--halo-cian);
+}
+.pw-opciones { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.pw-opcion {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: var(--superficie-2);
+  border: 1px solid var(--linea);
+  --b: var(--bisel-sm);
+  clip-path: polygon(
+    var(--b) 0, 100% 0, 100% calc(100% - var(--b)),
+    calc(100% - var(--b)) 100%, 0 100%, 0 var(--b)
+  );
+}
+.pw-opcion[data-sin-captura="si"] { grid-template-columns: 1fr auto; }
+.pw-opcion__captura {
+  display: block;
+  width: 120px;
+  height: auto;
+  background: var(--vacio);
+  border: 1px solid var(--linea);
+}
+.pw-opcion__texto { min-width: 0; }
+.pw-opcion__nombre { display: block; font-size: 0.95rem; font-weight: 700; color: var(--texto); overflow-wrap: anywhere; }
+.pw-opcion__descripcion { margin: 4px 0 0; font-size: 0.8rem; line-height: 1.5; color: var(--texto-2); }
+.pw-volver { margin-top: 16px; }
+
+/* ---- Aviso de simulacion --------------------------------------------------- */
+.pw-aviso {
+  flex: none;
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--texto-2);
+  background: var(--superficie);
+  border-top: 1px solid var(--linea);
+}
+.pw-aviso a { color: var(--cian); font-weight: 700; }
+
+/* ---- Adaptive Card (ac-*) --------------------------------------------------- */
+.ac-cuerpo, .ac-contenedor, .ac-columna { display: grid; align-content: start; min-width: 0; }
+/* Separacion por defecto entre elementos; `spacing` la ajusta y el primero no la lleva. */
+.ac-cuerpo > * + *, .ac-contenedor > * + *, .ac-columna > * + * { margin-top: 6px; }
+.ac-tarjeta [data-spacing="none"] { margin-top: 0; }
+.ac-tarjeta [data-spacing="small"] { margin-top: 4px; }
+.ac-tarjeta [data-spacing="medium"], .ac-tarjeta [data-spacing="padding"] { margin-top: 12px; }
+.ac-tarjeta [data-spacing="large"] { margin-top: 18px; }
+.ac-tarjeta [data-spacing="extralarge"] { margin-top: 24px; }
+.ac-cuerpo > :first-child, .ac-contenedor > :first-child, .ac-columna > :first-child { margin-top: 0; }
+.ac-tarjeta [data-separator="true"] { border-top: 1px solid var(--linea); padding-top: 6px; }
+
+.ac-texto { margin: 0; font-size: 0.9rem; line-height: 1.35; overflow-wrap: anywhere; }
+.ac-texto[data-size="small"] { font-size: 0.78rem; }
+.ac-texto[data-size="medium"] { font-size: 1.05rem; }
+.ac-texto[data-size="large"] { font-size: 1.35rem; }
+.ac-texto[data-size="extralarge"] { font-size: 1.9rem; }
+.ac-texto[data-weight="lighter"] { font-weight: 300; }
+.ac-texto[data-weight="bolder"] { font-weight: 700; }
+.ac-texto[data-color="accent"] { color: var(--cian); text-shadow: 0 0 10px var(--halo-cian); }
+.ac-texto[data-color="good"] { color: var(--verde); }
+.ac-texto[data-color="warning"] { color: var(--ambar); }
+.ac-texto[data-color="attention"] { color: var(--rojo); }
+.ac-texto[data-color="light"] { color: var(--texto-2); }
+.ac-texto[data-color="dark"] { color: var(--texto); }
+.ac-texto[data-subtle="true"] { color: var(--texto-2); }
+.ac-texto[data-wrap="false"] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ac-texto[data-align="center"] { text-align: center; }
+.ac-texto[data-align="right"] { text-align: right; }
+/* Los numeros de puesto (columna auto, en negrita) van en monoespaciada, como todo el HUD. */
+.ac-columna[data-ancho="auto"] .ac-texto[data-weight="bolder"] {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.6ch;
+  text-align: center;
+}
+
+.ac-contenedor[data-style="emphasis"],
+.ac-contenedor[data-style="accent"],
+.ac-contenedor[data-style="good"],
+.ac-contenedor[data-style="warning"],
+.ac-contenedor[data-style="attention"] {
+  padding: 10px;
+  background: var(--superficie-suave);
+  border: 1px solid var(--linea);
+}
+.ac-contenedor[data-style="accent"] { border-color: var(--linea-fuerte); }
+.ac-contenedor[data-style="good"] { border-color: var(--verde); }
+.ac-contenedor[data-style="warning"] { border-color: var(--ambar); }
+.ac-contenedor[data-style="attention"] { border-color: var(--rojo); }
+
+.ac-columnas { display: flex; gap: 10px; align-items: stretch; }
+.ac-columna[data-ancho="auto"] { flex: 0 0 auto; }
+.ac-columna[data-ancho="stretch"] { flex: 1 1 0; }
+.ac-columna[data-ancho="peso"] { flex: 1 1 0; } /* flex-grow lo fija el modulo */
+.ac-columna[data-ancho="px"] { flex: 0 0 auto; }
+.ac-columna[data-valign="center"] { align-content: center; }
+.ac-columna[data-valign="bottom"] { align-content: end; }
+
+.ac-imagen { display: block; max-width: 100%; height: auto; }
+.ac-imagen[data-size="small"] { width: 40px; }
+.ac-imagen[data-size="medium"] { width: 80px; }
+.ac-imagen[data-size="large"] { width: 160px; }
+.ac-imagen[data-size="stretch"] { width: 100%; }
+.ac-imagen[data-style="person"] { border-radius: 50%; }
+.ac-imagen[data-align="center"] { margin-inline: auto; }
+.ac-imagen[data-align="right"] { margin-left: auto; }
+
+.ac-hechos { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 0.86rem; }
+.ac-hecho { display: contents; }
+.ac-hechos dt { color: var(--texto-2); }
+.ac-hechos dd { margin: 0; font-weight: 700; text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.ac-acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--linea);
+}
+.ac-accion { min-height: 36px; padding: 6px 14px; font-size: 0.7rem; }
+.ac-accion[data-style="positive"] { color: var(--verde); border-color: var(--verde); }
+.ac-accion[data-style="destructive"] { color: var(--rojo); border-color: var(--rojo); }
+
+.ac-desconocido {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  color: var(--texto-2);
+  border: 1px dashed var(--linea-fuerte);
+}
+
+@media (max-width: 720px) {
+  .pw-panel { width: 100vw; border-right: 0; }
+  .pw-rejilla { grid-template-columns: minmax(0, 1fr); }
+  .pw-agregar-boton, .pw-volver { width: 100%; }
+  .pw-opcion { grid-template-columns: 1fr; }
+  .pw-opcion__captura { width: 100%; max-width: 240px; }
+  .pw-opcion__agregar { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pw-panel[open] { animation: none; }
 }

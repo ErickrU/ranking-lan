@@ -7,10 +7,14 @@
  *   - el manifest es valido y tiene iconos
  *   - el service worker se registra y precachea el app shell
  *   - la tabla y el podio se pintan con datos
+ *   - el panel de widgets (simulador del Widgets Board) abre, lista el widget
+ *     del manifest, lo pinta con datos reales y persiste su estado
  *   - la app sigue funcionando offline (segunda carga sin red)
  *
  * Ademas captura las dos imagenes que declara manifest.webmanifest
- * (screenshots), usadas por Android para enriquecer el dialogo de instalacion.
+ * (screenshots), usadas por Android para enriquecer el dialogo de instalacion,
+ * y la captura del widget (widgets/top3-lan-captura.png) que declara el
+ * miembro `widgets` del manifest.
  *
  * Uso:  node herramientas/verificar.mjs [--url http://localhost:8137/]
  */
@@ -510,8 +514,8 @@ try {
       })(),
     };
   })()`);
-  comprobar('La barra de título tiene exactamente cinco controles',
-    controles.cuantos === 5, controles.ids.join(', '));
+  comprobar('La barra de título tiene exactamente seis controles',
+    controles.cuantos === 6, controles.ids.join(', '));
   comprobar('Cada control tiene aria-label, title e icono', controles.todosAccesibles);
   comprobar('Cabecera arrastrable y controles no-drag (WCO)',
     controles.cabeceraDrag && controles.noDrag);
@@ -593,6 +597,262 @@ try {
   comprobar('Restablecer vuelve a LAN · Retador y limpia la búsqueda',
     restablecer.region === 'la1' && restablecer.tier === 'CHALLENGER' && restablecer.busqueda === '',
     restablecer.titulo);
+
+  /* --- Panel de widgets -------------------------------------------------- */
+  console.log('\nPanel de widgets');
+
+  const manifestWidgets = await cdp.evaluar(`(async () => {
+    const m = await (await fetch('./manifest.webmanifest')).json();
+    const w = (m.widgets ?? [])[0];
+    if (!w) return { hay: false };
+    const [rp, rd] = await Promise.all([fetch(w.ms_ac_template), fetch(w.data)]);
+    let plantilla = null, datos = null;
+    try { plantilla = await rp.json(); } catch { /* no es JSON */ }
+    try { datos = await rd.json(); } catch { /* no es JSON */ }
+    return {
+      hay: true, nombre: w.name, tag: w.tag,
+      campos: ['name', 'description', 'tag', 'template', 'ms_ac_template', 'data'].every(c => typeof w[c] === 'string' && w[c]),
+      capturas: Array.isArray(w.screenshots) && w.screenshots.length >= 1 && w.screenshots.every(s => s.src && s.sizes && s.label),
+      iconos: Array.isArray(w.icons) && w.icons.length >= 1,
+      auth: w.auth === false,
+      update: typeof w.update === 'number',
+      tipo: w.type === 'application/json',
+      plantillaOk: rp.ok, datosOk: rd.ok,
+      esTarjeta: plantilla?.type === 'AdaptiveCard' && typeof plantilla.version === 'string',
+      verbo: Array.isArray(plantilla?.actions) && plantilla.actions.some(a => a.type === 'Action.Execute' && a.verb === 'actualizar'),
+      jugadores: Array.isArray(datos?.jugadores) ? datos.jugadores.length : 0,
+    };
+  })()`);
+  comprobar('El manifest declara un widget con todos los campos requeridos',
+    manifestWidgets.hay && manifestWidgets.campos && manifestWidgets.capturas && manifestWidgets.iconos &&
+    manifestWidgets.auth && manifestWidgets.update && manifestWidgets.tipo,
+    manifestWidgets.hay ? `«${manifestWidgets.nombre}» · tag ${manifestWidgets.tag}` : 'sin miembro widgets');
+  comprobar('La plantilla y los datos del widget responden 200 con JSON válido',
+    manifestWidgets.plantillaOk && manifestWidgets.datosOk && manifestWidgets.esTarjeta &&
+    manifestWidgets.verbo && manifestWidgets.jugadores === 3,
+    `AdaptiveCard con verbo «actualizar» · ${manifestWidgets.jugadores} jugadores de ejemplo`);
+
+  // Vectores de prueba del resolvedor ${...} (compartidos por las tres PWA).
+  const vectores = await cdp.evaluar(`(async () => {
+    const m = await import('./js/widgets.js');
+    const d = { a: { b: [ { c: 'x' }, { c: 7 } ] }, n: 5, s: 'demo', v: true, f: false, z: 0, nulo: null };
+    const original = { type: 'TextBlock', text: '\${s}', items: [{ text: '\${n}' }], wrap: true };
+    const copia = m.enlazarPlantilla(original, d);
+    let desconocido = false;
+    try {
+      const nodo = m.renderizarTarjeta({ type: 'AdaptiveCard', body: [{ type: 'Desconocido' }] }, {}, {});
+      desconocido = nodo.querySelector('.ac-desconocido')?.textContent === 'Elemento no soportado: Desconocido';
+    } catch { desconocido = false; }
+    const casos = [
+      [m.enlazarTexto('\${a.b[1].c}', d), '7'],
+      [m.enlazarTexto('Valor: \${a.b[0].c}!', d), 'Valor: x!'],
+      [m.enlazarTexto('\${no.existe}', d), ''],
+      [m.enlazarTexto('\${a.b[5].c} fin', d), ' fin'],
+      [m.enlazarTexto("\${if(s == 'demo', 'Demo', 'Vivo')}", d), 'Demo'],
+      [m.enlazarTexto("\${if(n > 3, 'mayor', 'menor')}", d), 'mayor'],
+      [m.enlazarTexto("\${if(v, 'sí', 'no')}", d), 'sí'],
+      [m.enlazarTexto("\${if(f, 'sí', 'no')}", d), 'no'],
+      [m.enlazarTexto("\${if(z, 'sí', 'no')}", d), 'no'],
+      [m.enlazarTexto("\${if(nulo == null, 'nulo', 'algo')}", d), 'nulo'],
+      [m.enlazarTexto("\${if(no.existe == null, 'nulo', 'algo')}", d), 'nulo'],
+      [m.enlazarTexto("\${if(n == '5', 'igual', 'dif')}", d), 'igual'],
+      [m.enlazarTexto("\${if(s == 'a, b', 'coma', 'sin')}", d), 'sin'],
+      [m.enlazarTexto('\${n} y \${s}', d), '5 y demo'],
+      [m.enlazarTexto('sin expresiones', d), 'sin expresiones'],
+      [m.enlazarTexto('\${', d), '\${'],
+      [m.resolverExpresion('a.b[1].c', d), 7],
+      [m.resolverExpresion('if(n >= 5, n, 0)', d), 5],
+      [m.resolverExpresion("'lit'", d) === 'lit' && m.resolverExpresion('3.5', d) === 3.5 && m.resolverExpresion('true', d) === true, true],
+      [m.resolverExpresion('expresion invalida ++', d), null],
+      [JSON.stringify(copia) === JSON.stringify({ type: 'TextBlock', text: 'demo', items: [{ text: '5' }], wrap: true }) && original.text === '\${s}', true],
+      [desconocido, true],
+    ];
+    const fallos = [];
+    casos.forEach(([real, esperado], i) => {
+      if (real !== esperado) fallos.push((i + 1) + ': ' + JSON.stringify(real) + ' ≠ ' + JSON.stringify(esperado));
+    });
+    return { total: casos.length, pasan: casos.length - fallos.length, fallos };
+  })()`);
+  comprobar('El resolvedor de expresiones cumple los 22 vectores', vectores.pasan === vectores.total && vectores.total === 22,
+    `${vectores.pasan}/${vectores.total}${vectores.fallos.length ? ' · ' + vectores.fallos.join(' · ') : ''}`);
+
+  const abrePanel = await cdp.evaluar(`(async () => {
+    const boton = document.getElementById('control-widgets');
+    const r = { existe: !!boton,
+                accesible: !!(boton?.getAttribute('aria-label') && boton?.title && boton?.querySelector('svg')) };
+    boton.focus();
+    boton.click();
+    await new Promise(r => setTimeout(r, 400));
+    const panel = document.getElementById('panel-widgets');
+    r.abierto = !!panel?.open;
+    r.focoEnCerrar = document.activeElement?.classList.contains('pw-cerrar');
+    r.etiquetado = panel?.getAttribute('aria-labelledby') === 'pw-titulo'
+      && document.getElementById('pw-titulo')?.textContent === 'Widgets';
+    r.aviso = !!document.querySelector('#panel-widgets .pw-aviso a[href*="learn.microsoft.com"]');
+    r.vacio = getComputedStyle(document.querySelector('#panel-widgets .pw-vacio')).display !== 'none';
+    return r;
+  })()`);
+  comprobar('El control Widgets abre el panel con el foco en Cerrar',
+    abrePanel.existe && abrePanel.accesible && abrePanel.abierto && abrePanel.focoEnCerrar &&
+    abrePanel.etiquetado && abrePanel.aviso && abrePanel.vacio,
+    `abierto ${abrePanel.abierto} · foco en cerrar ${abrePanel.focoEnCerrar} · aviso con enlace ${abrePanel.aviso} · estado vacío ${abrePanel.vacio}`);
+
+  const selector = await cdp.evaluar(`(async () => {
+    document.querySelector('#panel-widgets .pw-agregar-boton').click();
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      if (document.querySelectorAll('#panel-widgets .pw-opcion').length > 0) break;
+    }
+    return {
+      opciones: document.querySelectorAll('#panel-widgets .pw-opcion').length,
+      nombre: document.querySelector('#panel-widgets .pw-opcion__nombre')?.textContent ?? '',
+      descripcion: (document.querySelector('#panel-widgets .pw-opcion__descripcion')?.textContent ?? '').length,
+      captura: !!document.querySelector('#panel-widgets .pw-opcion__captura'),
+      vista: document.querySelector('#panel-widgets .pw-vista').dataset.vista,
+      focoEnAgregar: document.activeElement?.classList.contains('pw-opcion__agregar'),
+    };
+  })()`);
+  comprobar('El selector lista el widget del manifest',
+    selector.opciones >= 1 && selector.nombre === manifestWidgets.nombre && selector.descripcion > 0 &&
+    selector.captura && selector.vista === 'agregar' && selector.focoEnAgregar,
+    `${selector.opciones} opción · «${selector.nombre}» · foco en Agregar ${selector.focoEnAgregar}`);
+
+  const agregado = await cdp.evaluar(`(async () => {
+    const r = await fetch('./api/ranking?region=la1&cola=RANKED_SOLO_5x5&tier=CHALLENGER&division=I');
+    const riotId = (await r.json()).jugadores[0].riotId;
+    document.querySelector('#panel-widgets .pw-opcion__agregar').click();
+    let pintado = false;
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      if ([...document.querySelectorAll('.pw-tarjeta .ac-texto')].some(p => p.textContent.includes(riotId))) { pintado = true; break; }
+    }
+    const tarjeta = document.querySelector('#panel-widgets .pw-tarjeta');
+    return {
+      riotId, pintado,
+      tarjetas: document.querySelectorAll('#panel-widgets .pw-tarjeta').length,
+      grupo: tarjeta?.getAttribute('role') === 'group' && !!tarjeta?.getAttribute('aria-label'),
+      quitarEtiquetado: !!tarjeta?.querySelector('.pw-quitar[aria-label]'),
+      anuncio: document.getElementById('estado-pwa').textContent,
+      vista: document.querySelector('#panel-widgets .pw-vista').dataset.vista,
+      guardado: localStorage.getItem('ranking-lan:widgets-instalados') ?? '',
+      textos: document.querySelectorAll('.pw-tarjeta .ac-texto').length,
+      desconocidos: document.querySelectorAll('.pw-tarjeta .ac-desconocido').length,
+    };
+  })()`);
+  comprobar('Agregar el widget pinta la tarjeta con el top 1 del ladder',
+    agregado.pintado && agregado.tarjetas === 1 && agregado.grupo && agregado.quitarEtiquetado &&
+    /Widget agregado/.test(agregado.anuncio) && agregado.vista === 'panel' &&
+    agregado.guardado.includes('top3-lan') && agregado.desconocidos === 0,
+    `${agregado.riotId} · ${agregado.textos} textos · anuncio «${agregado.anuncio}»`);
+
+  const accion = await cdp.evaluar(`(async () => {
+    const boton = document.querySelector('.pw-tarjeta .ac-accion[data-verb="actualizar"]');
+    const enlace = document.querySelector('.pw-tarjeta .ac-accion--enlace[href]');
+    if (!boton) return { boton: false, anuncio: '', href: '' };
+    document.getElementById('estado-pwa').textContent = '';
+    boton.focus();
+    boton.click();
+    let anuncio = '';
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      anuncio = document.getElementById('estado-pwa').textContent;
+      if (/Widget actualizado/.test(anuncio)) break;
+    }
+    return { boton: true, anuncio, href: enlace?.getAttribute('href') ?? '',
+             focoConservado: document.activeElement?.dataset?.verb === 'actualizar' };
+  })()`);
+  comprobar('La acción Actualizar llega al SW y vuelve como WIDGET_ACTUALIZADO',
+    accion.boton && /Widget actualizado/.test(accion.anuncio) && accion.href.includes('tier=CHALLENGER') && accion.focoConservado,
+    `anuncio «${accion.anuncio}» · Action.OpenUrl -> ${accion.href} · foco conservado ${accion.focoConservado}`);
+
+  const cierre = await cdp.evaluar(`(async () => {
+    const btn = document.querySelector('#panel-widgets .pw-cerrar');
+    const caja = btn.getBoundingClientRect();
+    const esquina = document.elementFromPoint(caja.left + 3, caja.top + 3);
+    const r = { w: Math.round(caja.width), h: Math.round(caja.height),
+                esquinaPulsable: esquina === btn || btn.contains(esquina) };
+    btn.click();
+    await new Promise(r => setTimeout(r, 250));
+    r.cerro = !document.getElementById('panel-widgets').open;
+    r.focoVolvio = document.activeElement?.id === 'control-widgets';
+    return r;
+  })()`);
+  comprobar('El botón de cerrar del panel mide ≥ 44 px, su esquina es pulsable y devuelve el foco',
+    cierre.w >= 44 && cierre.h >= 44 && cierre.esquinaPulsable && cierre.cerro && cierre.focoVolvio,
+    `${cierre.w}×${cierre.h} · esquina ${cierre.esquinaPulsable ? 'ok' : 'MUERTA'} · cerró ${cierre.cerro} · foco devuelto ${cierre.focoVolvio}`);
+
+  /* Captura del widget para el manifest: la tarjeta (320×300) a escala 2 = 640×600. */
+  await cdp.enviar('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await cdp.evaluar(`(async () => {
+    document.getElementById('control-widgets').click();
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      if (document.querySelector('.pw-tarjeta .ac-accion')) break;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  })()`);
+  const rectTarjeta = await cdp.evaluar(`(() => {
+    const r = document.querySelector('#panel-widgets .pw-tarjeta').getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height };
+  })()`);
+  const pngWidget = Buffer.from((await cdp.enviar('Page.captureScreenshot', {
+    format: 'png', clip: { x: rectTarjeta.x, y: rectTarjeta.y, width: 320, height: 300, scale: 2 },
+  })).data, 'base64');
+  writeFileSync(join(RAIZ, 'widgets', 'top3-lan-captura.png'), pngWidget);
+  // Cabecera PNG: ancho y alto en los bytes 16 y 20.
+  const medidas = { ancho: pngWidget.readUInt32BE(16), alto: pngWidget.readUInt32BE(20) };
+  const sizesManifest = await cdp.evaluar(
+    `fetch('./manifest.webmanifest').then(r => r.json()).then(m => m.widgets[0].screenshots[0].sizes)`);
+  comprobar('La captura del widget mide 640×600 y coincide con el manifest',
+    medidas.ancho === 640 && medidas.alto === 600 && medidas.ancho <= 1024 && medidas.alto <= 1024 &&
+    sizesManifest === `${medidas.ancho}x${medidas.alto}`,
+    `${medidas.ancho}×${medidas.alto} · manifest ${sizesManifest} · tarjeta ${Math.round(rectTarjeta.w)}×${Math.round(rectTarjeta.h)}`);
+
+  /* Capturas de revision visual del panel (no van al repositorio). */
+  writeFileSync('/tmp/ranking-lan-widgets-escritorio.png',
+    Buffer.from((await cdp.enviar('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await cdp.enviar('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 1, mobile: true });
+  // Al pasar de escritorio a movil con el panel abierto, la emulacion conserva
+  // un factor de escala distinto de 1 y la captura sale ampliada: se fija a 1.
+  await cdp.enviar('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+  await espera(500);
+  writeFileSync('/tmp/ranking-lan-widgets-movil.png',
+    Buffer.from((await cdp.enviar('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await cdp.evaluar(`(async () => {
+    document.querySelector('#panel-widgets .pw-agregar-boton').click();
+    await new Promise(r => setTimeout(r, 400));
+  })()`);
+  writeFileSync('/tmp/ranking-lan-widgets-selector.png',
+    Buffer.from((await cdp.enviar('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await cdp.evaluar(`document.getElementById('panel-widgets').close()`);
+  await cdp.enviar('Emulation.clearDeviceMetricsOverride');
+
+  /* Persistencia real del estado instalado: recarga completa. */
+  await cdp.enviar('Page.navigate', { url: URL_APP });
+  for (let i = 0; i < 60; i++) {
+    await espera(250);
+    try {
+      if (await cdp.evaluar(`document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length > 0`)) break;
+    } catch { /* navegando */ }
+  }
+  const persistencia = await cdp.evaluar(`(async () => {
+    const guardado = JSON.parse(localStorage.getItem('ranking-lan:widgets-instalados') ?? '[]');
+    document.getElementById('control-widgets').click();
+    let textos = [];
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      textos = [...document.querySelectorAll('.pw-tarjeta .ac-texto')].map(p => p.textContent);
+      if (textos.some(t => t.includes(${JSON.stringify(agregado.riotId)}))) break;
+    }
+    const r = { guardado, tarjetas: document.querySelectorAll('#panel-widgets .pw-tarjeta').length,
+                conTop1: textos.some(t => t.includes(${JSON.stringify(agregado.riotId)})) };
+    document.getElementById('panel-widgets').close();
+    await new Promise(r => setTimeout(r, 150));
+    return r;
+  })()`);
+  comprobar('El widget instalado persiste tras recargar',
+    persistencia.guardado.includes('top3-lan') && persistencia.tarjetas === 1 && persistencia.conTop1,
+    `${JSON.stringify(persistencia.guardado)} · ${persistencia.tarjetas} tarjeta montada sin volver a agregar`);
 
   // Chrome headless no expone navigator.windowControlsOverlay. Se inyecta una
   // simulacion ANTES de que cargue el modulo (Page.addScriptToEvaluateOnNewDocument)
@@ -776,7 +1036,7 @@ try {
   })()`);
   comprobar('El service worker se registra y activa', sw.registrado && sw.activo, sw.alcance);
   comprobar('Precachea el app shell', sw.precacheados >= 10, `${sw.precacheados} recursos`);
-  for (const esperado of ['/index.html', '/offline.html', '/css/estilos.css', '/js/app.js', '/js/amigos.js', '/js/i18n.js', '/datos/ranking-lan.json']) {
+  for (const esperado of ['/index.html', '/offline.html', '/css/estilos.css', '/js/app.js', '/js/amigos.js', '/js/i18n.js', '/js/widgets.js', '/widgets/top3-lan-plantilla.json', '/widgets/top3-lan-datos.json', '/datos/ranking-lan.json']) {
     comprobar(`  precacheado ${esperado}`, sw.rutas.some((r) => r.endsWith(esperado)));
   }
   // Chrome solo dispara beforeinstallprompt si se cumplen TODOS los criterios de
@@ -864,6 +1124,27 @@ try {
   comprobar('El grupo también funciona offline (rangos desde caché)',
     grupoOffline.filas >= 1 && grupoOffline.liga.length > 0 && grupoOffline.liga !== 'Sin datos',
     `${grupoOffline.filas} integrante · ${grupoOffline.liga}`);
+
+  const widgetsOffline = await cdp.evaluar(`(async () => {
+    document.getElementById('control-widgets').click();
+    let textos = [];
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      textos = [...document.querySelectorAll('.pw-tarjeta .ac-texto')].map(p => p.textContent);
+      if (textos.some(t => t.includes(${JSON.stringify(agregado.riotId)}))) break;
+    }
+    const r = {
+      tarjetas: document.querySelectorAll('#panel-widgets .pw-tarjeta').length,
+      conTop1: textos.some(t => t.includes(${JSON.stringify(agregado.riotId)})),
+      error: !!document.querySelector('#panel-widgets .pw-estado--error'),
+      fuente: textos.find(t => /Desde caché|Datos de demostración|Datos en vivo/.test(t)) ?? '',
+    };
+    document.getElementById('panel-widgets').close();
+    return r;
+  })()`);
+  comprobar('El panel de widgets también funciona sin red',
+    widgetsOffline.tarjetas === 1 && widgetsOffline.conTop1 && !widgetsOffline.error,
+    `${widgetsOffline.tarjetas} tarjeta · ${widgetsOffline.fuente}`);
 
   await cdp.enviar('Network.emulateNetworkConditions', {
     offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,

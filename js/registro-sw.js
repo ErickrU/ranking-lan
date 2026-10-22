@@ -3,6 +3,7 @@
  * Modulo independiente de la logica de la app; solo comparte i18n.
  */
 import { t } from './i18n.js';
+import { crearPanelWidgets } from './widgets.js';
 
 const estadoSw = document.getElementById('estado-sw');
 const estadoPwa = document.getElementById('estado-pwa');
@@ -10,12 +11,13 @@ const toast = document.getElementById('toast-actualizacion');
 const btnRecargar = document.getElementById('btn-recargar');
 const metaTema = document.querySelector('meta[name="theme-color"]');
 
-/* Los cinco controles de la barra de titulo */
+/* Los seis controles de la barra de titulo */
 const btnInstalar = document.getElementById('btn-instalar');
 const btnCompartir = document.getElementById('control-compartir');
 const btnTema = document.getElementById('control-tema');
 const btnRestablecer = document.getElementById('control-restablecer');
 const btnAyuda = document.getElementById('control-ayuda');
+const btnWidgets = document.getElementById('control-widgets');
 const dialogoAyuda = document.getElementById('dialogo-ayuda');
 const btnCerrarAyuda = document.getElementById('cerrar-ayuda');
 
@@ -314,10 +316,27 @@ navigator.windowControlsOverlay?.addEventListener('geometrychange', programarSin
 matchMedia('(display-mode: window-controls-overlay)').addEventListener('change', programarSincronizacionWco);
 
 /* ================================================================
+   8. Panel de widgets
+   ----------------------------------------------------------------
+   Simulador del Widgets Board de Windows 11: en macOS no existe el
+   panel del sistema, asi que el sexto control abre un <dialog> que
+   pinta la misma Adaptive Card (manifest -> widgets/) que Windows
+   mostraria, con datos pedidos al service worker. Los textos pasan
+   por i18n con el prefijo "widgets.".
+   ================================================================ */
+const panelWidgets = crearPanelWidgets({
+  boton: btnWidgets,
+  anunciar,
+  t: (clave, vars) => t(`widgets.${clave}`, vars),
+  claveAlmacen: 'ranking-lan:widgets-instalados',
+});
+
+/* ================================================================
    Arranque de los controles
    ================================================================ */
 marcarInstalada();
 addEventListener('idiomacambiado', () => {
   marcarInstalada();
   aplicarTema(document.documentElement.dataset.tema ?? 'oscuro', false);
+  panelWidgets.retraducir();
 });

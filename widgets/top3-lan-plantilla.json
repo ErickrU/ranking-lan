@@ -1,0 +1,151 @@
+{
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "type": "AdaptiveCard",
+  "version": "1.5",
+  "body": [
+    {
+      "type": "TextBlock",
+      "text": "Top 3 · ${region} · ${liga}",
+      "size": "Small",
+      "weight": "Bolder",
+      "isSubtle": true
+    },
+    {
+      "type": "ColumnSet",
+      "spacing": "Small",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "auto",
+          "verticalContentAlignment": "Center",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[0].puesto}",
+              "size": "Large",
+              "weight": "Bolder",
+              "color": "Accent"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[0].riotId}",
+              "weight": "Bolder",
+              "wrap": false
+            },
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[0].lp} LP · ${jugadores[0].victorias} V / ${jugadores[0].derrotas} D",
+              "size": "Small",
+              "isSubtle": true,
+              "spacing": "None"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "ColumnSet",
+      "spacing": "Small",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "auto",
+          "verticalContentAlignment": "Center",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[1].puesto}",
+              "size": "Large",
+              "weight": "Bolder",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[1].riotId}",
+              "weight": "Bolder",
+              "wrap": false
+            },
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[1].lp} LP · ${jugadores[1].victorias} V / ${jugadores[1].derrotas} D",
+              "size": "Small",
+              "isSubtle": true,
+              "spacing": "None"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "ColumnSet",
+      "spacing": "Small",
+      "columns": [
+        {
+          "type": "Column",
+          "width": "auto",
+          "verticalContentAlignment": "Center",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[2].puesto}",
+              "size": "Large",
+              "weight": "Bolder",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "type": "Column",
+          "width": "stretch",
+          "items": [
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[2].riotId}",
+              "weight": "Bolder",
+              "wrap": false
+            },
+            {
+              "type": "TextBlock",
+              "text": "${jugadores[2].lp} LP · ${jugadores[2].victorias} V / ${jugadores[2].derrotas} D",
+              "size": "Small",
+              "isSubtle": true,
+              "spacing": "None"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "TextBlock",
+      "text": "${fuenteTexto} · ${actualizadoTexto}",
+      "size": "Small",
+      "isSubtle": true,
+      "spacing": "Medium",
+      "wrap": true
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.Execute",
+      "title": "Actualizar",
+      "verb": "actualizar"
+    },
+    {
+      "type": "Action.OpenUrl",
+      "title": "Abrir ranking",
+      "url": "${urlApp}"
+    }
+  ]
+}

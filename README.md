@@ -235,7 +235,9 @@ ranking-lan/
 │   ├── campeones.js           Pestaña «Campeones»: catálogo de Data Dragon y ficha de build
 │   ├── i18n.js                Diccionarios ES/EN, t(), cambio de idioma en vivo
 │   ├── ui.js                  Renderizado (todo con textContent)
-│   └── registro-sw.js         Registro del SW, aviso de versión, instalación
+│   ├── widgets.js             Panel de widgets: resolvedor ${...}, Adaptive Cards y simulador
+│   └── registro-sw.js         Registro del SW, aviso de versión, instalación, controles
+├── widgets/                   Widget «Top 3 LAN»: plantilla Adaptive Card, datos y captura
 ├── datos/ranking-lan.json     Semilla de demostración (ficticia)
 ├── iconos/                    SVG fuente, PNG generados y capturas
 ├── servidor/proxy.mjs         Estáticos + proxy de la API de Riot
@@ -266,7 +268,8 @@ npm run iconos     # regenera los PNG desde los SVG
 | Funciona offline | Caché del shell + última clasificación descargada |
 | Instalable con botón propio | `beforeinstallprompt` en `js/registro-sw.js` |
 | Barra de título propia (Window Controls Overlay) | `display_override` en el manifest; `env(titlebar-area-*)`, zonas `drag`/`no-drag` y `geometrychange` en `css/estilos.css` + `js/registro-sw.js` |
-| Cinco controles de ventana: instalar, compartir, tema, restablecer, ayuda | `[data-control-ventana]` en `index.html`, lógica en `js/registro-sw.js` |
+| Seis controles de ventana: instalar, compartir, tema, restablecer, ayuda, widgets | `[data-control-ventana]` en `index.html`, lógica en `js/registro-sw.js` |
+| Widget para el panel de Windows 11 (Edge PWA Widgets) y simulador en macOS | Miembro `widgets` del manifest, `widgets/`, bloque `WIDGETS` en `sw.js`, `js/widgets.js` |
 | Tema claro / oscuro persistente | `html[data-tema]` con tokens semánticos; contraste AA verificado en ambos |
 | Aviso de versión nueva sin recargas sorpresa | `SALTAR_ESPERA` + `controllerchange` con guarda |
 | Compartir el grupo con un enlace | Web Share API con respaldo de portapapeles (`js/amigos.js`) |
@@ -276,8 +279,8 @@ npm run iconos     # regenera los PNG desde los SVG
 
 ### Barra de título y controles de ventana
 
-La cabecera es una barra de título propia con cinco controles (instalar, compartir, tema,
-restablecer, ayuda), el selector de idioma y Actualizar. Como página web es una cabecera
+La cabecera es una barra de título propia con seis controles (instalar, compartir, tema,
+restablecer, ayuda, widgets), el selector de idioma y Actualizar. Como página web es una cabecera
 pegajosa; instalada en escritorio con **Window Controls Overlay**, se coloca en la franja
 del sistema usando `env(titlebar-area-x/y/width/height)`: la marca y el hueco central
 arrastran la ventana (`app-region: drag`) y los controles son `no-drag`. Si la franja es
@@ -291,6 +294,15 @@ sistema. `geometrychange` se agrupa con 200 ms de espera.
 - **Restablecer**: evento `restablecerfiltros` que la vista regional interpreta como volver
   a LAN · Retador · Solo/Dúo sin búsqueda, y Mi grupo como limpiar el formulario (nunca
   borra integrantes).
+- **Widgets**: abre el *Panel de widgets*, una simulación del Widgets Board de Windows 11
+  para poder demostrar en macOS los **Edge PWA Widgets**. El manifest declara el widget
+  «Top 3 LAN» (`widgets[]`: `tag`, `ms_ac_template`, `data`, `screenshots`, `update`…), la
+  plantilla es una Adaptive Card 1.5 (`widgets/top3-lan-plantilla.json`) y el service worker
+  implementa `widgetinstall` / `widgetresume` / `widgetclick` y `updateWidgets()` en
+  `activate`, pintando con `self.widgets.updateByTag`. El panel lista los widgets del
+  manifest, los «instala» (estado en `localStorage`) y pinta la misma plantilla con datos
+  reales pedidos al service worker; la acción *Actualizar* viaja como `WIDGET_ACCION` y pasa
+  por la misma función que atiende `widgetclick`, así que simulador y Windows comparten código.
 - Cada acción se anuncia en una región `role="status"` para lectores de pantalla.
 
 ### Estrategias de caché
@@ -319,8 +331,11 @@ node herramientas/verificar.mjs --url http://localhost:8137/
 
 Levanta Chrome headless y comprueba en un navegador real el render, los filtros, el diálogo
 de detalle, la sección Mi grupo (altas, orden por rango, duplicados, persistencia, quitar),
-el manifest, el registro y el precache del service worker, y que tanto el ladder como el
-grupo sigan abriendo con la red desconectada. También regenera las capturas del manifest.
+el panel de widgets (manifest, plantilla y datos del widget, resolvedor `${...}`, agregar,
+acción *Actualizar* vía service worker, persistencia, botón de cerrar de 44 px), el manifest,
+el registro y el precache del service worker, y que el ladder, el grupo y el panel de widgets
+sigan abriendo con la red desconectada. También regenera las capturas del manifest y la del
+widget (`widgets/top3-lan-captura.png`).
 
 ### A mano
 

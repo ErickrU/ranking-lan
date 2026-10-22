@@ -83,5 +83,31 @@
       "short_name": "Builds",
       "url": "./?vista=campeones"
     }
+  ],
+  "widgets": [
+    {
+      "name": "Top 3 LAN",
+      "short_name": "Top 3",
+      "description": "Los tres mejores jugadores de Retador en la región LAN, con sus puntos de liga y victorias/derrotas.",
+      "tag": "top3-lan",
+      "template": "top3-lan",
+      "ms_ac_template": "./widgets/top3-lan-plantilla.json",
+      "data": "./widgets/top3-lan-datos.json",
+      "type": "application/json",
+      "screenshots": [
+        {
+          "src": "./widgets/top3-lan-captura.png",
+          "sizes": "640x600",
+          "type": "image/png",
+          "platform": "windows",
+          "label": "Widget Top 3 LAN en el panel de widgets"
+        }
+      ],
+      "icons": [
+        { "src": "./iconos/icono-192.png", "sizes": "192x192", "type": "image/png" }
+      ],
+      "auth": false,
+      "update": 900
+    }
   ]
 }

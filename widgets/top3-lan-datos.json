@@ -1,0 +1,15 @@
+{
+  "region": "LAN",
+  "liga": "Retador",
+  "cola": "Solo/Dúo",
+  "fuente": "demo",
+  "fuenteTexto": "Datos de demostración",
+  "actualizado": "2026-09-14T18:00:00.000Z",
+  "actualizadoTexto": "14/09/26, 12:00 p.m.",
+  "jugadores": [
+    { "puesto": 1, "riotId": "VicunaSereno#LAN1", "lp": 2033, "victorias": 413, "derrotas": 397 },
+    { "puesto": 2, "riotId": "IguanaTitan9#ARG", "lp": 2024, "victorias": 323, "derrotas": 299 },
+    { "puesto": 3, "riotId": "SelvaSilente#BOG", "lp": 2012, "victorias": 361, "derrotas": 313 }
+  ],
+  "urlApp": "./?tier=CHALLENGER&cola=RANKED_SOLO_5x5"
+}
