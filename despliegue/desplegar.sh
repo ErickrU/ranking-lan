@@ -111,7 +111,9 @@ ETIQUETA="$(date +%Y%m%d-%H%M%S)"
 IMAGEN="$REGISTRO/$REPO:$ETIQUETA"
 
 echo "Construyendo $IMAGEN ..."
-docker build --platform "$PLATAFORMA" -t "$IMAGEN" "$RAIZ"
+# --pull: no reutilizar una base cacheada de hace meses; el apk upgrade del
+# Dockerfile aplica despues los parches de Alpine sobre la base fresca.
+docker build --pull --platform "$PLATAFORMA" -t "$IMAGEN" "$RAIZ"
 docker push "$IMAGEN"
 
 # ----------------------------------------------------------------------------
