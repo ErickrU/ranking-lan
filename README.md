@@ -229,12 +229,14 @@ También como flags: `--puerto 8080`, `--host 0.0.0.0`, `--top 30`.
 ```
 ranking-lan/
 ├── index.html                 Interfaz
+├── privacidad.html            Política de privacidad (enlazada desde el pie, la ayuda y la Store)
 ├── offline.html               Respaldo de navegación sin red ni caché
 ├── manifest.webmanifest       Identidad instalable: iconos, atajos, capturas
-├── sw.js                      Service worker (precache + estrategias)
+├── sw.js                      Service worker v9 (precache + estrategias + widgets + avisos)
 ├── css/estilos.css
 ├── js/
 │   ├── app.js                 Estado, eventos, pestañas, orquestación
+│   ├── avisos.js              Sección «Avisos y distintivos»: permiso, interruptor, mensajes al SW
 │   ├── api.js                 Capa de datos: proxy → caché → demo
 │   ├── amigos.js              Sección «Mi grupo»: altas, orden, historial, consejos, compartir
 │   ├── campeones.js           Pestaña «Campeones»: catálogo de Data Dragon y ficha de build
@@ -246,12 +248,15 @@ ranking-lan/
 ├── datos/ranking-lan.json     Semilla de demostración (ficticia)
 ├── iconos/                    SVG fuente, PNG generados y capturas
 ├── servidor/proxy.mjs         Estáticos + proxy de la API de Riot
+├── tienda/                    Material para la Microsoft Store: listado, guía de publicación y capturas 1920×1080
 ├── Dockerfile                 Imagen de producción (node:22-alpine, sin deps)
 ├── despliegue/
 │   ├── plantilla.yaml         CloudFormation: Fargate + ALB (+ CloudFront)
 │   ├── desplegar.sh           Construye, sube a ECR y despliega el stack
 │   └── eliminar.sh            Borra toda la infraestructura
 └── herramientas/
+    ├── cdp.mjs                Cliente CDP mínimo y arranque de Chrome headless (compartido)
+    ├── capturas-tienda.mjs    Capturas 1920×1080 para la Store → tienda/capturas/
     ├── generar-iconos.sh      SVG → PNG con Chrome headless
     ├── generar-datos-demo.mjs Regenera la semilla de demostración
     └── verificar.mjs          Pruebas end-to-end vía Chrome DevTools Protocol
@@ -275,6 +280,7 @@ npm run iconos     # regenera los PNG desde los SVG
 | Barra de título propia (Window Controls Overlay) | `display_override` en el manifest; `env(titlebar-area-*)`, zonas `drag`/`no-drag` y `geometrychange` en `css/estilos.css` + `js/registro-sw.js` |
 | Seis controles de ventana: instalar, compartir, tema, restablecer, ayuda, widgets | `[data-control-ventana]` en `index.html`, lógica en `js/registro-sw.js` |
 | Widget para el panel de Windows 11 (Edge PWA Widgets) y simulador en macOS | Miembro `widgets` del manifest, `widgets/`, bloque `WIDGETS` en `sw.js`, `js/widgets.js` |
+| Notificaciones locales, distintivo y sincronización periódica (Notifications + Badging + Periodic Background Sync, sin push) | Bloque `AVISOS` en `sw.js`, `js/avisos.js`, sección «Avisos y distintivos» en `index.html` |
 | Tema claro / oscuro persistente | `html[data-tema]` con tokens semánticos; contraste AA verificado en ambos |
 | Aviso de versión nueva sin recargas sorpresa | `SALTAR_ESPERA` + `controllerchange` con guarda |
 | Compartir el grupo con un enlace | Web Share API con respaldo de portapapeles (`js/amigos.js`) |
@@ -323,7 +329,79 @@ Cuando el service worker responde desde su caché por falta de red, añade la ca
 `X-Ranking-Origen: cache`. `js/api.js` la lee para mostrar *Desde caché* en lugar de
 *Datos en vivo*: la interfaz nunca presenta datos viejos como frescos.
 
-Al desplegar un cambio, **sube `VERSION` en `sw.js`** para que se borren los cachés anteriores.
+Al desplegar un cambio en el manifest o en archivos precacheados, **sube `VERSION` en `sw.js`**
+(hoy `v9`) para que se borren los cachés anteriores.
+
+## Avisos y distintivos
+
+Sigue la guía de Microsoft Edge
+[*Re-engage users with badges, notifications, and push messages*](https://learn.microsoft.com/microsoft-edge/progressive-web-apps/how-to/notifications-badges),
+sin la parte de push: no hay servidor de notificaciones ni suscripciones. Todo se decide en el
+service worker, en el dispositivo.
+
+**Qué genera un aviso**
+
+- Un integrante de «Mi grupo» sube o baja de liga o división («VicunaSereno subió a Oro II (45 LP)»).
+- Un integrante gana o pierde 20 LP o más sin cambiar de liga (`UMBRAL_LP`).
+- Cambia el top 3 de la región, cola y liga seleccionadas («Nuevo top 3 en LAN · Retador · Solo/Dúo: A, B y C»).
+
+La primera vez que se ve un grupo o un listado solo se guarda la instantánea, sin avisar.
+
+**Cuándo se comprueba**
+
+- Cada vez que la página refresca datos frescos en primer plano: `app.js` y `amigos.js` publican
+  `AVISOS_DATOS` y el SW compara con la última instantánea.
+- Con la app instalada en un navegador Chromium, por `periodicsync` (tag `avisos`,
+  `minInterval` 12 h): el SW lee su configuración, pide `/api/ranking` y `/api/jugador` al proxy
+  y pasa por la misma función `procesarAvisos()`.
+- A mano con **Comprobar ahora** (`AVISOS_SINCRONIZAR`, mismo camino que `periodicsync`).
+
+**Permiso y distintivo**
+
+El permiso de notificaciones se pide solo al pulsar **Activar avisos** (nunca al cargar). El
+distintivo del icono (`setAppBadge`) es el número de cambios no vistos; se limpia al recuperar el
+foco, al volver a la pestaña visible o al abrir la sección. Las notificaciones llevan dos
+acciones, **Ver mi grupo** y **Ver ranking**, y `notificationclick` enfoca la ventana abierta
+(o abre una) en la pestaña correspondiente.
+
+**Contrato página ⇄ service worker**
+
+| Dirección | Mensaje | Contenido |
+|---|---|---|
+| Página → SW | `AVISOS_DATOS` | `{config?, ranking?, grupo?}`: preferencias y selección, top 3 del listado, miembros del grupo con rango |
+| Página → SW | `AVISOS_PROBAR` · `AVISOS_VISTOS` · `AVISOS_SINCRONIZAR` · `AVISOS_ABRIR {accion}` | Probar aviso, marcar vistos, comprobar ahora, simular el clic en una acción |
+| SW → página | `AVISOS_PENDIENTES` | `{n, cambios[], badge, origen}` tras cada procesado |
+| SW → página | `AVISOS_PROBADO` · `AVISOS_IR {vista}` | Resultado de la prueba; navegar a una pestaña |
+
+El estado del SW vive en Cache Storage, caché `ranking-lan-avisos-v1` (`./avisos/config.json`,
+`./avisos/instantanea.json`, `./avisos/pendientes.json`); solo el SW la escribe. La preferencia
+del usuario se guarda además en `localStorage` (`ranking-lan:avisos`).
+
+**Probarlo en local**
+
+1. `node servidor/proxy.mjs --puerto 8137` y abrir http://localhost:8137/ en Chrome o Edge.
+2. Sección **Avisos y distintivos** → **Activar avisos** → aceptar → **Probar aviso**.
+3. Para forzar la sincronización: DevTools → *Application* → *Service workers* → *Periodic Sync*
+   con el tag `avisos` (o **Comprobar ahora**).
+4. El verificador lo cubre de forma automática: concede el permiso por CDP, comprueba la
+   notificación de prueba y sus acciones, inyecta dos `AVISOS_DATOS` sintéticos (un miembro que
+   sube de liga y un top 3 que cambia), verifica las notificaciones `grupo` y `ranking`, el
+   contador, la limpieza al recuperar el foco y que `AVISOS_SINCRONIZAR` escribe la instantánea.
+
+## Microsoft Store
+
+La app se publica como PWA alojada: el paquete MSIX que genera [PWABuilder](https://www.pwabuilder.com)
+solo apunta a https://d3b4s9lb316i67.cloudfront.net/, así que cada despliegue web actualiza la
+app de la Store. Todo el material está en `tienda/`:
+
+- `tienda/listado-microsoft-store.md`: textos para Partner Center (nombre, descripciones,
+  características, términos de búsqueda, copyright, URLs, justificación de `runFullTrust`,
+  categoría y respuestas sugeridas al cuestionario IARC).
+- `tienda/publicacion.md`: pasos de Partner Center y PWABuilder, pruebas en Windows 11 (barra de
+  título, notificaciones, distintivo, widgets, sin conexión), envío a certificación,
+  `iarc_rating_id`, clave de producción de Riot y reversión.
+- `tienda/capturas/*.png`: capturas de escritorio 1920×1080, generadas con
+  `node herramientas/capturas-tienda.mjs --url http://localhost:8137/` (con el proxy en marcha).
 
 ## Probarla
 
@@ -338,8 +416,11 @@ Levanta Chrome headless y comprueba en un navegador real el render, los filtros,
 de detalle, la sección Mi grupo (altas, orden por rango, duplicados, persistencia, quitar),
 el panel de widgets (manifest, plantilla y datos del widget, resolvedor `${...}`, agregar,
 acción *Actualizar* vía service worker, persistencia, botón de cerrar de 44 px), el manifest,
-el registro y el precache del service worker, y que el ladder, el grupo y el panel de widgets
-sigan abriendo con la red desconectada. También regenera las capturas del manifest y la del
+el registro y el precache del service worker, la sección «Avisos y distintivos» (permiso
+concedido por CDP, notificación de prueba con dos acciones, cambios sintéticos que generan avisos
+y distintivo, limpieza al recuperar el foco, «Comprobar ahora» escribe la instantánea), el aviso
+legal y `/privacidad.html`, la cabecera bajo WCO, el aviso de servidor caído, y que el ladder, el
+grupo y el panel de widgets sigan abriendo con la red desconectada. También regenera las capturas del manifest y la del
 widget (`widgets/top3-lan-captura.png`).
 
 ### A mano
@@ -415,10 +496,15 @@ Verificado a septiembre de 2026:
 - **Instalación**: Chrome, Edge y Safari (escritorio y iOS) la instalan. En Firefox de
   escritorio la instalación es experimental desde la versión 143, solo en Windows y desactivada
   por defecto.
-- **Notificaciones push**: en iOS solo funcionan si la PWA ya está instalada en la pantalla de
-  inicio (Safari 16.4+). Esta app no usa push.
-- **Background Sync**: no existe en Gecko ni en WebKit, así que esta app no depende de él; el
-  refresco se hace al recuperar la conexión y al volver a la pestaña.
+- **Notificaciones**: la app usa solo notificaciones locales desde el service worker
+  (`showNotification`), nunca Push API. En iOS las notificaciones web solo existen con la PWA
+  instalada en la pantalla de inicio (Safari 16.4+).
+- **Distintivo (Badging API)**: Chrome y Edge de escritorio con la app instalada; Safari en
+  macOS Sonoma+. No existe en Firefox: `setAppBadge` se comprueba antes de llamarlo y la app
+  degrada en silencio.
+- **Periodic Background Sync**: solo en Chromium (Chrome/Edge) con la app instalada y según el
+  *site engagement*. No existe en Gecko ni en WebKit; el refresco se hace al recuperar la
+  conexión, al volver a la pestaña y con el botón «Comprobar ahora».
 
 ## Límites conocidos
 
@@ -441,9 +527,14 @@ Verificado a septiembre de 2026:
 
 ## Aviso legal
 
+Ranking LAN isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+
 Ranking LAN no está respaldado por Riot Games y no refleja las opiniones ni los puntos de vista
 de Riot Games ni de nadie relacionado oficialmente con la producción o gestión de las propiedades
 de Riot Games. Riot Games y todas las propiedades asociadas son marcas comerciales o marcas
 registradas de Riot Games, Inc.
+
+Política de privacidad: [`privacidad.html`](privacidad.html)
+(https://d3b4s9lb316i67.cloudfront.net/privacidad.html).
 
 Proyecto académico · UTEC · Aplicaciones Web Progresivas.

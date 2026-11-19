@@ -34,13 +34,12 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Cdp, espera, lanzarChrome, paginaInicial } from './cdp.mjs';
 
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
-const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const flag = (n, def) => {
   const i = process.argv.indexOf(`--${n}`);
@@ -50,63 +49,6 @@ const URL_APP = flag('url', 'http://localhost:8137/');
 const PUERTO_CDP = Number(flag('cdp', 9333));
 /** Puerto del proxy auxiliar que se arranca y se mata en la seccion «Servidor caído». */
 const PUERTO_CAIDA = Number(flag('caida', 8139));
-
-const espera = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/* ================================================================
-   Cliente CDP minimo
-   ================================================================ */
-class Cdp {
-  #ws; #id = 0; #pendientes = new Map();
-  eventos = [];
-
-  constructor(ws) {
-    this.#ws = ws;
-    ws.addEventListener('message', (e) => {
-      const mensaje = JSON.parse(e.data);
-      if (mensaje.id !== undefined) {
-        const pendiente = this.#pendientes.get(mensaje.id);
-        this.#pendientes.delete(mensaje.id);
-        mensaje.error ? pendiente?.rechazar(new Error(mensaje.error.message)) : pendiente?.resolver(mensaje.result);
-      } else {
-        this.eventos.push(mensaje);
-      }
-    });
-  }
-
-  static async conectar(url) {
-    const ws = new WebSocket(url);
-    await new Promise((resolver, rechazar) => {
-      ws.addEventListener('open', resolver, { once: true });
-      ws.addEventListener('error', () => rechazar(new Error('No se pudo abrir el WebSocket de CDP')), { once: true });
-    });
-    return new Cdp(ws);
-  }
-
-  enviar(method, params = {}) {
-    const id = ++this.#id;
-    return new Promise((resolver, rechazar) => {
-      this.#pendientes.set(id, { resolver, rechazar });
-      this.#ws.send(JSON.stringify({ id, method, params }));
-      setTimeout(() => {
-        if (this.#pendientes.delete(id)) rechazar(new Error(`Tiempo agotado en ${method}`));
-      }, 30_000);
-    });
-  }
-
-  /** Evalua JS en la pagina y devuelve el valor ya deserializado. */
-  async evaluar(expresion) {
-    const { result, exceptionDetails } = await this.enviar('Runtime.evaluate', {
-      expression: expresion,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? 'Error al evaluar');
-    return result.value;
-  }
-
-  cerrar() { this.#ws.close(); }
-}
 
 /* ================================================================
    Informe
@@ -120,17 +62,7 @@ const comprobar = (nombre, ok, detalle = '') => {
 /* ================================================================
    Principal
    ================================================================ */
-const perfil = mkdtempSync(join(tmpdir(), 'ranking-lan-chrome-'));
-const chrome = spawn(CHROME, [
-  '--headless=new',
-  `--remote-debugging-port=${PUERTO_CDP}`,
-  `--user-data-dir=${perfil}`,
-  '--no-first-run',
-  '--no-default-browser-check',
-  '--disable-gpu',
-  '--hide-scrollbars',
-  'about:blank',
-], { stdio: 'ignore' });
+const { chrome, perfil } = lanzarChrome(PUERTO_CDP);
 
 let cdp;
 let proxyCaida; // proxy auxiliar de la seccion «Servidor caído»; se mata en el finally
@@ -138,17 +70,7 @@ let codigoSalida = 0;
 
 try {
   /* --- Localizar el target de la pagina ------------------------------- */
-  let objetivo;
-  for (let intento = 0; intento < 60; intento++) {
-    try {
-      const lista = await (await fetch(`http://127.0.0.1:${PUERTO_CDP}/json/list`)).json();
-      objetivo = lista.find((t) => t.type === 'page');
-      if (objetivo?.webSocketDebuggerUrl) break;
-    } catch { /* Chrome aun no escucha */ }
-    await espera(250);
-  }
-  if (!objetivo) throw new Error('Chrome no expuso ningún target de página');
-
+  const objetivo = await paginaInicial(PUERTO_CDP);
   cdp = await Cdp.conectar(objetivo.webSocketDebuggerUrl);
 
   await cdp.enviar('Runtime.enable');
