@@ -7,6 +7,10 @@
  *   - el manifest es valido y tiene iconos
  *   - el service worker se registra y precachea el app shell
  *   - la tabla y el podio se pintan con datos
+ *   - la seccion "Avisos y distintivos" pide el permiso al activar, el SW
+ *     muestra notificaciones con acciones (Browser.grantPermissions concede
+ *     el permiso por CDP), los cambios sinteticos generan avisos y pendientes,
+ *     el foco los limpia y "Comprobar ahora" escribe la instantanea
  *   - el panel de widgets (simulador del Widgets Board) abre, lista el widget
  *     del manifest, lo pinta con datos reales y persiste su estado
  *   - la app sigue funcionando offline (segunda carga sin red)
@@ -138,6 +142,11 @@ try {
   await cdp.enviar('Log.enable');
   await cdp.enviar('Page.enable');
   await cdp.enviar('Network.enable');
+  // Headless no muestra el dialogo de permisos: se concede por CDP para poder
+  // probar las notificaciones del service worker (seccion Avisos).
+  await cdp.enviar('Browser.grantPermissions', {
+    origin: new URL(URL_APP).origin, permissions: ['notifications'],
+  });
 
   /* --- Primera carga (con red) ---------------------------------------- */
   console.log(`\nCargando ${URL_APP}\n`);
@@ -559,7 +568,7 @@ try {
     return r;
   })()`);
   comprobar('La ayuda abre como diálogo modal con el foco gestionado',
-    ayuda.abierto && ayuda.items === 5 && ayuda.focoEnCerrar && ayuda.focoVolvio,
+    ayuda.abierto && ayuda.items === 6 && ayuda.focoEnCerrar && ayuda.focoVolvio,
     `${ayuda.items} apartados · foco al cerrar: ${ayuda.focoEnCerrar} · devuelto: ${ayuda.focoVolvio}`);
 
   const compartir = await cdp.evaluar(`(async () => {
@@ -597,6 +606,208 @@ try {
   comprobar('Restablecer vuelve a LAN · Retador y limpia la búsqueda',
     restablecer.region === 'la1' && restablecer.tier === 'CHALLENGER' && restablecer.busqueda === '',
     restablecer.titulo);
+
+  /* --- Avisos y distintivos ---------------------------------------------- */
+  console.log('\nAvisos y distintivos');
+
+  // Acumulador de todo lo que difunde el SW y espera por predicado desde un
+  // indice: asi cada paso solo mira los mensajes que provoco.
+  await cdp.evaluar(`(() => {
+    window.__mensajesAvisos = [];
+    navigator.serviceWorker.addEventListener('message', (e) => window.__mensajesAvisos.push(e.data));
+    window.__esperarAviso = async (predicado, desde = 0, ms = 8000) => {
+      const limite = Date.now() + ms;
+      while (Date.now() < limite) {
+        const m = window.__mensajesAvisos.slice(desde).find(predicado);
+        if (m) return m;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return null;
+    };
+    window.__swActivo = async () => navigator.serviceWorker.controller ?? (await navigator.serviceWorker.ready).active;
+  })()`);
+
+  const seccionAvisos = await cdp.evaluar(`(() => {
+    const s = document.getElementById('avisos');
+    if (!s) return { existe: false };
+    s.open = true; // el contenido de un <details> cerrado no se pinta
+    const visible = (el) => !!el && !el.hidden && el.getClientRects().length > 0;
+    return {
+      existe: true,
+      fueraDeVistas: !s.closest('.vista') && !!s.closest('main'),
+      activarVisible: visible(document.getElementById('avisos-activar')),
+      interruptorOculto: !visible(document.getElementById('avisos-interruptor-etiqueta')),
+      probarDeshabilitado: document.getElementById('avisos-probar')?.disabled === true,
+      comprobarDeshabilitado: document.getElementById('avisos-comprobar')?.disabled === true,
+      contadorOculto: document.getElementById('avisos-contador')?.hidden === true,
+    };
+  })()`);
+  comprobar('La sección vive fuera de las vistas con «Activar avisos» visible y el resto inactivo',
+    seccionAvisos.existe && seccionAvisos.fueraDeVistas && seccionAvisos.activarVisible &&
+    seccionAvisos.interruptorOculto && seccionAvisos.probarDeshabilitado &&
+    seccionAvisos.comprobarDeshabilitado && seccionAvisos.contadorOculto,
+    JSON.stringify(seccionAvisos));
+
+  const activarAvisos = await cdp.evaluar(`(async () => {
+    document.getElementById('avisos-activar').click();
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      if (document.getElementById('avisos-estado').textContent.includes('segundo plano')) break;
+    }
+    const etiqueta = document.getElementById('avisos-interruptor-etiqueta');
+    let guardado = null;
+    try { guardado = JSON.parse(localStorage.getItem('ranking-lan:avisos')).activados; } catch {}
+    return {
+      permiso: Notification.permission,
+      activarOculto: document.getElementById('avisos-activar').hidden,
+      interruptorVisible: !etiqueta.hidden && etiqueta.getClientRects().length > 0,
+      marcado: document.getElementById('avisos-interruptor').checked,
+      guardado,
+      probarHabilitado: !document.getElementById('avisos-probar').disabled,
+      estado: document.getElementById('avisos-estado').textContent,
+    };
+  })()`);
+  comprobar('Activar avisos obtiene el permiso, muestra el interruptor marcado y guarda la preferencia',
+    activarAvisos.permiso === 'granted' && activarAvisos.activarOculto && activarAvisos.interruptorVisible &&
+    activarAvisos.marcado && activarAvisos.guardado === true && activarAvisos.probarHabilitado,
+    `permiso ${activarAvisos.permiso} · guardado ${activarAvisos.guardado}`);
+  comprobar('El estado explica la sincronización en segundo plano',
+    activarAvisos.estado.includes('segundo plano'), activarAvisos.estado);
+
+  const prueba = await cdp.evaluar(`(async () => {
+    const desde = window.__mensajesAvisos.length;
+    document.getElementById('avisos-probar').click();
+    const m = await window.__esperarAviso(x => x.tipo === 'AVISOS_PROBADO', desde);
+    const reg = await navigator.serviceWorker.ready;
+    const lista = await reg.getNotifications({ tag: 'prueba' });
+    const n = lista[0];
+    return {
+      mostrado: m?.mostrado, badge: m?.badge, cuantas: lista.length,
+      acciones: n?.actions?.length ?? 0, titulo: n?.title ?? '', icono: n?.icon ?? '',
+      anuncio: document.getElementById('estado-pwa').textContent,
+    };
+  })()`);
+  comprobar('Probar aviso muestra desde el SW una notificación con dos acciones e icono',
+    prueba.mostrado === true && ['establecido', 'no-soportado'].includes(prueba.badge) &&
+    prueba.cuantas === 1 && prueba.acciones === 2 && prueba.titulo.length > 0 && prueba.icono.includes('icono-192'),
+    `badge ${prueba.badge} · «${prueba.titulo}» · ${prueba.acciones} acciones`);
+
+  const abrirAvisos = await cdp.evaluar(`(async () => {
+    const sw = await window.__swActivo();
+    const ir = async (accion, idVista) => {
+      const desde = window.__mensajesAvisos.length;
+      sw.postMessage({ tipo: 'AVISOS_ABRIR', accion });
+      const m = await window.__esperarAviso(x => x.tipo === 'AVISOS_IR', desde);
+      await new Promise(r => setTimeout(r, 100));
+      return { vista: m?.vista, visible: !document.getElementById(idVista).hidden };
+    };
+    const grupo = await ir('grupo', 'vista-grupo');
+    const global = await ir('ranking', 'vista-global');
+    return { grupo, global };
+  })()`);
+  comprobar('AVISOS_ABRIR (clic simulado) lleva a «Mi grupo» y al ranking',
+    abrirAvisos.grupo.vista === 'grupo' && abrirAvisos.grupo.visible &&
+    abrirAvisos.global.vista === 'global' && abrirAvisos.global.visible,
+    `grupo: ${abrirAvisos.grupo.visible} · global: ${abrirAvisos.global.visible}`);
+
+  const sinteticos = await cdp.evaluar(`(async () => {
+    const sw = await window.__swActivo();
+    const config = { activados: true, region: 'la1', cola: 'RANKED_SOLO_5x5', tier: 'CHALLENGER', division: 'I',
+                     grupo: { miembros: ['Sintetico#TEST'], cola: 'RANKED_SOLO_5x5' } };
+    const ranking = (claves) => ({
+      clave: 'kr|RANKED_FLEX_SR|CHALLENGER|I', region: 'kr', cola: 'RANKED_FLEX_SR', tier: 'CHALLENGER', division: 'I',
+      top3: claves.map((c, i) => ({ clave: c, riotId: c.toUpperCase() + '#KR', lp: 1500 - i * 10 })),
+    });
+    const grupo = (tier, division, lp) => ({
+      region: 'la1', cola: 'RANKED_SOLO_5x5', miembros: [{ riotId: 'Sintetico#TEST', tier, division, lp }],
+    });
+    let desde = window.__mensajesAvisos.length;
+    sw.postMessage({ tipo: 'AVISOS_DATOS', config, grupo: grupo('GOLD', 'II', 40), ranking: ranking(['p1', 'p2', 'p3']) });
+    const primero = await window.__esperarAviso(x => x.tipo === 'AVISOS_PENDIENTES' && x.origen === 'datos', desde);
+    desde = window.__mensajesAvisos.length;
+    sw.postMessage({ tipo: 'AVISOS_DATOS', config, grupo: grupo('PLATINUM', 'IV', 12), ranking: ranking(['p2', 'p1', 'p3']) });
+    const segundo = await window.__esperarAviso(x => x.tipo === 'AVISOS_PENDIENTES' && x.origen === 'datos' && x.n >= 2, desde);
+    const reg = await navigator.serviceWorker.ready;
+    const [deGrupo, deRanking] = await Promise.all([reg.getNotifications({ tag: 'grupo' }), reg.getNotifications({ tag: 'ranking' })]);
+    const contador = document.getElementById('avisos-contador');
+    return {
+      primero: !!primero,
+      n: segundo?.n ?? null, badge: segundo?.badge ?? null,
+      grupo: { cuantas: deGrupo.length, cuerpo: deGrupo[0]?.body ?? '' },
+      ranking: { cuantas: deRanking.length, cuerpo: deRanking[0]?.body ?? '' },
+      items: document.querySelectorAll('#avisos-lista li').length,
+      tipos: [...document.querySelectorAll('#avisos-lista li')].map(li => li.dataset.tipo),
+      contadorVisible: !contador.hidden && contador.textContent.trim() !== '',
+      contador: contador.textContent,
+    };
+  })()`);
+  comprobar('Un cambio de liga en el grupo genera la notificación «grupo» (subió a Platino)',
+    sinteticos.primero && sinteticos.grupo.cuantas === 1 &&
+    sinteticos.grupo.cuerpo.includes('Platino') && sinteticos.grupo.cuerpo.includes('subió'),
+    sinteticos.grupo.cuerpo);
+  comprobar('Un top 3 distinto genera la notificación «ranking»',
+    sinteticos.ranking.cuantas === 1 && sinteticos.ranking.cuerpo.includes('top 3'),
+    sinteticos.ranking.cuerpo);
+  comprobar('Los pendientes suben a ≥ 2, la lista los muestra y el contador se ve',
+    sinteticos.n >= 2 && sinteticos.items >= 2 && sinteticos.contadorVisible &&
+    sinteticos.tipos.includes('grupo') && sinteticos.tipos.includes('ranking') &&
+    ['establecido', 'no-soportado', 'error'].includes(sinteticos.badge),
+    `n ${sinteticos.n} · ${sinteticos.items} ítems · contador «${sinteticos.contador}» · badge ${sinteticos.badge}`);
+
+  const vistos = await cdp.evaluar(`(async () => {
+    const desde = window.__mensajesAvisos.length;
+    window.dispatchEvent(new Event('focus'));
+    const m = await window.__esperarAviso(x => x.tipo === 'AVISOS_PENDIENTES' && x.origen === 'vistos', desde);
+    await new Promise(r => setTimeout(r, 100));
+    return {
+      n: m?.n ?? null, badge: m?.badge ?? null,
+      contadorOculto: document.getElementById('avisos-contador').hidden,
+      items: document.querySelectorAll('#avisos-lista li').length,
+    };
+  })()`);
+  comprobar('Al recuperar el foco los pendientes bajan a 0 y el distintivo se limpia',
+    vistos.n === 0 && ['limpio', 'no-soportado'].includes(vistos.badge) && vistos.contadorOculto && vistos.items >= 2,
+    `badge ${vistos.badge} · la lista conserva ${vistos.items} ítems`);
+
+  const sincronizacion = await cdp.evaluar(`(async () => {
+    const desde = window.__mensajesAvisos.length;
+    document.getElementById('avisos-comprobar').click();
+    const m = await window.__esperarAviso(x => x.tipo === 'AVISOS_PENDIENTES' && x.origen === 'sincronizacion', desde, 15000);
+    const cache = await caches.open('ranking-lan-avisos-v1');
+    const guardada = await cache.match(new URL('./avisos/instantanea.json', location.href).href);
+    const instantanea = guardada ? await guardada.json() : null;
+    return {
+      llego: !!m,
+      hayInstantanea: !!instantanea,
+      ranking: Object.keys(instantanea?.ranking ?? {}),
+      grupo: Object.keys(instantanea?.grupo ?? {}),
+    };
+  })()`);
+  comprobar('«Comprobar ahora» sincroniza desde el SW y escribe la instantánea',
+    sincronizacion.llego && sincronizacion.hayInstantanea && sincronizacion.ranking.length > 0 &&
+    sincronizacion.grupo.includes('la1|RANKED_SOLO_5x5|sintetico#test'),
+    `${sincronizacion.ranking.length} claves de ranking · grupo: ${sincronizacion.grupo.join(', ')}`);
+
+  const interruptorAvisos = await cdp.evaluar(`(async () => {
+    const input = document.getElementById('avisos-interruptor');
+    const leer = () => { try { return JSON.parse(localStorage.getItem('ranking-lan:avisos')).activados; } catch { return null; } };
+    input.click(); // desmarca
+    await new Promise(r => setTimeout(r, 300));
+    const apagado = { marcado: input.checked, guardado: leer(), probar: document.getElementById('avisos-probar').disabled,
+                      estado: document.getElementById('avisos-estado').textContent };
+    input.click(); // vuelve a marcar
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 150));
+      if (document.getElementById('avisos-estado').textContent.includes('segundo plano')) break;
+    }
+    const encendido = { marcado: input.checked, guardado: leer(), probar: document.getElementById('avisos-probar').disabled };
+    document.getElementById('avisos').open = false;
+    return { apagado, encendido };
+  })()`);
+  comprobar('El interruptor desactiva los avisos (preferencia y botones) y vuelve a activarlos',
+    !interruptorAvisos.apagado.marcado && interruptorAvisos.apagado.guardado === false && interruptorAvisos.apagado.probar &&
+    interruptorAvisos.encendido.marcado && interruptorAvisos.encendido.guardado === true && !interruptorAvisos.encendido.probar,
+    `apagado: «${interruptorAvisos.apagado.estado}»`);
 
   /* --- Panel de widgets -------------------------------------------------- */
   console.log('\nPanel de widgets');
@@ -1036,7 +1247,7 @@ try {
   })()`);
   comprobar('El service worker se registra y activa', sw.registrado && sw.activo, sw.alcance);
   comprobar('Precachea el app shell', sw.precacheados >= 10, `${sw.precacheados} recursos`);
-  for (const esperado of ['/index.html', '/offline.html', '/css/estilos.css', '/js/app.js', '/js/amigos.js', '/js/i18n.js', '/js/widgets.js', '/widgets/top3-lan-plantilla.json', '/widgets/top3-lan-datos.json', '/datos/ranking-lan.json']) {
+  for (const esperado of ['/index.html', '/offline.html', '/privacidad.html', '/css/estilos.css', '/js/app.js', '/js/amigos.js', '/js/avisos.js', '/js/i18n.js', '/js/widgets.js', '/widgets/top3-lan-plantilla.json', '/widgets/top3-lan-datos.json', '/datos/ranking-lan.json']) {
     comprobar(`  precacheado ${esperado}`, sw.rutas.some((r) => r.endsWith(esperado)));
   }
   // Chrome solo dispara beforeinstallprompt si se cumplen TODOS los criterios de

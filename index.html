@@ -374,6 +374,28 @@
     </div>
     <!-- ╚══════════════════════ FIN VISTA CAMPEONES ══════════════════════╝ -->
 
+    <!-- ============================ AVISOS Y DISTINTIVOS ============================
+         Visible en todas las pesta&ntilde;as (fuera de las vistas), cerrada por defecto.
+         Notifications API + App Badging sin push; el permiso se pide solo al pulsar
+         «Activar avisos». La l&oacute;gica vive en js/avisos.js y en el bloque AVISOS de sw.js. -->
+    <details id="avisos" class="panel acordeon avisos">
+      <summary><span data-i18n="avisos.resumen">Avisos y distintivos</span> <span id="avisos-contador" class="avisos__contador" hidden></span></summary>
+      <p class="avisos__intro" data-i18n="avisos.intro"></p>
+      <div class="avisos__controles">
+        <button id="avisos-activar" class="boton boton--oro" type="button" data-i18n="avisos.activar">Activar avisos</button>
+        <label id="avisos-interruptor-etiqueta" class="interruptor" hidden>
+          <input id="avisos-interruptor" type="checkbox" role="switch">
+          <span data-i18n="avisos.interruptor">Avisos activados</span>
+        </label>
+        <button id="avisos-probar" class="boton" type="button" data-i18n="avisos.probar" disabled>Probar aviso</button>
+        <button id="avisos-comprobar" class="boton boton--fantasma" type="button" data-i18n="avisos.comprobar" disabled>Comprobar ahora</button>
+      </div>
+      <p id="avisos-estado" class="avisos__estado" role="status" aria-live="polite"></p>
+      <h3 class="avisos__subtitulo" data-i18n="avisos.cambios.titulo">&Uacute;ltimos cambios</h3>
+      <ul id="avisos-lista" class="avisos__lista"></ul>
+      <p id="avisos-vacio" class="panel__nota" data-i18n="avisos.cambios.vacio"></p>
+    </details>
+
   </main>
 
   <!-- ============================ DETALLE ============================ -->
@@ -401,6 +423,7 @@
       <li><strong data-i18n="ayuda.i3.t">Detalle:</strong> <span data-i18n="ayuda.i3.d"></span></li>
       <li><strong data-i18n="ayuda.i4.t">Sin conexi&oacute;n:</strong> <span data-i18n="ayuda.i4.d"></span></li>
       <li><strong data-i18n="ayuda.i5.t">Controles:</strong> <span data-i18n="ayuda.i5.d"></span></li>
+      <li><strong data-i18n="ayuda.i6.t">Avisos:</strong> <span data-i18n="ayuda.i6.d"></span></li>
     </ul>
     <p class="ayuda__nota" data-i18n="ayuda.nota"></p>
   </dialog>

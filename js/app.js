@@ -20,6 +20,7 @@ import {
 } from './ui.js';
 import { iniciarGrupo } from './amigos.js';
 import { iniciarCampeones } from './campeones.js';
+import { iniciarAvisos, publicarRanking, retraducirAvisos } from './avisos.js';
 
 /* ------------------------------------------------------------------ *
  * Referencias al DOM
@@ -250,6 +251,8 @@ async function cargar() {
     // Si el usuario cambio de filtro mientras esperabamos, descartamos.
     if (miPeticion !== peticionEnCurso) return;
     estado.listado = listado;
+    // El service worker compara el top 3 con su instantanea y avisa si cambio.
+    publicarRanking(listado);
   } catch (error) {
     if (miPeticion !== peticionEnCurso) return;
     console.error('[Ranking LAN] no se pudo obtener el ranking:', error);
@@ -360,6 +363,7 @@ addEventListener('offline', () => pintar());
 addEventListener('idiomacambiado', () => {
   poblarRegiones();
   pintar();
+  retraducirAvisos();
 });
 
 /* Control "Restablecer" de la barra de titulo: vuelve a LAN · Retador · Solo/Duo
@@ -435,6 +439,9 @@ for (const [clave, { tab }] of Object.entries(pestanas)) {
   tab.addEventListener('click', () => activarVista(clave));
 }
 
+// Clic en una notificacion (o en su simulador): el SW pide abrir una vista.
+addEventListener('irvista', (evento) => activarVista(evento.detail?.vista));
+
 // Flechas entre pestanas, como pide el patron tablist de WAI-ARIA.
 document.querySelector('.pestanas').addEventListener('keydown', (evento) => {
   if (evento.key !== 'ArrowLeft' && evento.key !== 'ArrowRight') return;
@@ -453,6 +460,17 @@ document.querySelector('.pestanas').addEventListener('keydown', (evento) => {
 iniciarI18n();
 leerPreferencias();
 poblarRegiones();
+
+// Avisos y distintivos: anuncia sus resultados en la misma region viva que
+// usan los controles de la barra de titulo.
+iniciarAvisos({
+  anunciar: (texto) => {
+    const region = document.getElementById('estado-pwa');
+    if (!region) return;
+    region.textContent = '';
+    requestAnimationFrame(() => { region.textContent = texto; });
+  },
+});
 
 const parametros = new URLSearchParams(location.search);
 

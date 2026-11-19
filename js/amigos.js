@@ -39,6 +39,7 @@ import {
   renderConsejos,
   renderExtraMensaje,
 } from './ui.js';
+import { publicarGrupo } from './avisos.js';
 
 const CLAVE_GRUPO = 'ranking-lan:grupo';
 
@@ -211,6 +212,7 @@ async function agregar(nombreBruto, tagBruto) {
     estado.ultimaCarga = new Date().toISOString();
     guardar();
     render();
+    publicarGrupoActual();
     avisar(t('msj.seUnio', { riotId: canonico }), 'ok');
     nodos.campoNombre.value = '';
     nodos.campoTag.value = '';
@@ -231,7 +233,23 @@ function quitar(riotId) {
   estado.datos.delete(claveDe(riotId));
   guardar();
   render();
+  publicarGrupoActual(); // para que el SW deje de vigilar a quien salio
   avisar(t('msj.salio', { riotId }), 'info');
+}
+
+/**
+ * Publica al service worker (via avisos.js) los integrantes clasificados en la
+ * cola activa con datos frescos: sin errores y sin copias de cache.
+ */
+function publicarGrupoActual() {
+  const miembros = estado.miembros
+    .map((riotId) => {
+      const dato = estado.datos.get(claveDe(riotId));
+      const entrada = dato && !dato.error && dato.fuente !== FUENTE.CACHE ? dato.colas?.[estado.cola] : null;
+      return entrada ? { riotId, tier: entrada.tier, division: entrada.division, lp: entrada.lp } : null;
+    })
+    .filter(Boolean);
+  publicarGrupo({ cola: estado.cola, region: regionActual(), miembros });
 }
 
 let peticionEnCurso = 0;
@@ -264,6 +282,7 @@ async function cargarTodos() {
   estado.cargando = false;
   estado.ultimaCarga = new Date().toISOString();
   render();
+  publicarGrupoActual();
 }
 
 /* ------------------------------------------------------------------ *

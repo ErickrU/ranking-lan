@@ -12,17 +12,24 @@
 
    Ademas implementa el widget "Top 3 LAN" para el panel de widgets de
    Windows 11 (Edge PWA Widgets) y atiende al simulador de la pagina; ver el
-   bloque WIDGETS al final.
+   bloque WIDGETS.
+
+   Y genera los avisos y distintivos de la app (Notifications API + App
+   Badging, sin push): compara los datos frescos que publica la pagina (o que
+   el propio SW descarga en periodicsync) con su instantanea, muestra una
+   notificacion por cada cambio de "Mi grupo" o del top 3 y actualiza el
+   distintivo del icono; ver el bloque AVISOS al final.
 
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v8';
+const VERSION = 'v9';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
 const CACHE_DDRAGON = 'ranking-lan-ddragon-v1'; // retratos e indice de campeones
 const CACHE_WIDGETS = 'ranking-lan-widgets-v1'; // ultimo estado difundido del widget
-const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS, CACHE_DDRAGON, CACHE_WIDGETS]);
+const CACHE_AVISOS = 'ranking-lan-avisos-v1'; // config, instantanea y pendientes de los avisos
+const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS, CACHE_DDRAGON, CACHE_WIDGETS, CACHE_AVISOS]);
 
 /** App shell: lo minimo para que la app abra sin red. */
 const PRECACHE = [
@@ -39,6 +46,8 @@ const PRECACHE = [
   './js/i18n.js',
   './js/campeones.js',
   './js/widgets.js',
+  './js/avisos.js',
+  './privacidad.html',
   './widgets/top3-lan-plantilla.json',
   './widgets/top3-lan-datos.json',
   './widgets/top3-lan-captura.png',
@@ -109,7 +118,8 @@ self.addEventListener('activate', (evento) => {
 });
 
 /* ==========================================================================
-   MESSAGE · la pagina pide activar la version nueva o habla con el widget
+   MESSAGE · la pagina pide activar la version nueva, habla con el widget o
+   con los avisos
    ========================================================================== */
 self.addEventListener('message', (evento) => {
   const mensaje = evento.data;
@@ -118,6 +128,18 @@ self.addEventListener('message', (evento) => {
   if (mensaje.tipo === 'SALTAR_ESPERA') {
     self.skipWaiting();
     return;
+  }
+
+  // Mensajes de la seccion "Avisos y distintivos" (js/avisos.js); ver el
+  // bloque AVISOS al final. Un fallo nunca debe quedar como rechazo sin manejar.
+  const atender = (tarea) => evento.waitUntil(tarea.catch((error) => console.warn('[SW] avisos', error)));
+  switch (mensaje.tipo) {
+    case 'AVISOS_DATOS': atender(recibirDatosAvisos(mensaje)); return;
+    case 'AVISOS_PROBAR': atender(mostrarPrueba()); return;
+    case 'AVISOS_VISTOS': atender(marcarVistos()); return;
+    case 'AVISOS_SINCRONIZAR': atender(sincronizarAvisos()); return;
+    case 'AVISOS_ABRIR': atender(abrirDestino(mensaje.accion === 'ranking' ? 'global' : 'grupo')); return;
+    default: break;
   }
 
   // Mensajes del simulador del panel de widgets (js/widgets.js). Solo se
@@ -465,3 +487,430 @@ if ('widgets' in self) {
     evento.waitUntil(manejarAccionWidget(TAG_WIDGET, evento.action));
   });
 }
+
+/* ==========================================================================
+   AVISOS · Notifications API + App Badging (guia de Microsoft Edge para PWA)
+   --------------------------------------------------------------------------
+   Sin servidor push: los avisos nacen aqui, comparando datos frescos con la
+   ultima instantanea. La fuente de verdad es Cache Storage (CACHE_AVISOS), con
+   tres entradas sinteticas que SOLO escribe este service worker:
+
+     ./avisos/config.json       preferencia `activados`, seleccion (region,
+                                cola, tier, division) y grupo {miembros, cola}
+     ./avisos/instantanea.json  grupo["<region>|<cola>|<riotId minusculas>"]
+                                = {tier, division, lp} y
+                                ranking["<region>|<cola>|<tier>|<division>"]
+                                = {top3:[{clave, riotId, lp}]}
+     ./avisos/pendientes.json   {n, cambios[]} (tope MAX_CAMBIOS)
+
+   Pagina -> SW: AVISOS_DATOS {config?, ranking?, grupo?} cada vez que app.js
+   o amigos.js terminan con datos frescos; AVISOS_PROBAR, AVISOS_VISTOS,
+   AVISOS_SINCRONIZAR (misma sincronizarAvisos() que periodicsync) y
+   AVISOS_ABRIR {accion} (simulador del clic: misma abrirDestino() que
+   notificationclick).
+   SW -> todas las ventanas: AVISOS_PENDIENTES {n, cambios, badge, origen},
+   AVISOS_PROBADO {mostrado, badge} y AVISOS_IR {vista}.
+
+   Notificaciones y distintivo solo si config.activados y el permiso esta
+   concedido; la instantanea se actualiza siempre. Textos en espanol.
+   ========================================================================== */
+const UMBRAL_LP = 20;
+const MAX_MIEMBROS_AVISOS = 20;
+const MAX_CAMBIOS = 20;
+const MAX_RIOT_ID = 40;
+const TAG_SYNC_AVISOS = 'avisos';
+
+const ETIQUETA_REGION = {
+  la1: 'LAN', la2: 'LAS', na1: 'NA', br1: 'BR', euw1: 'EUW', eun1: 'EUNE', tr1: 'TR', ru: 'RU',
+  me1: 'ME', kr: 'KR', jp1: 'JP', oc1: 'OCE', sg2: 'SEA', tw2: 'TW', vn2: 'VN',
+};
+// Mismos nombres que TIERS en js/api.js.
+const NOMBRE_TIER = {
+  CHALLENGER: 'Retador', GRANDMASTER: 'Gran Maestro', MASTER: 'Maestro', DIAMOND: 'Diamante',
+  EMERALD: 'Esmeralda', PLATINUM: 'Platino', GOLD: 'Oro', SILVER: 'Plata', BRONZE: 'Bronce',
+  IRON: 'Hierro', UNRANKED: 'Sin clasificar',
+};
+const NOMBRE_COLA = { RANKED_SOLO_5x5: 'Solo/Dúo', RANKED_FLEX_SR: 'Flexible' };
+// Mismo orden y pesos que puntuacionRango() en js/api.js.
+const ORDEN_TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER'];
+const VALOR_DIVISION = { I: 3, II: 2, III: 1, IV: 0 };
+const TIERS_APEX = new Set(['CHALLENGER', 'GRANDMASTER', 'MASTER']);
+
+const ACCION_GRUPO = { action: 'grupo', title: 'Ver mi grupo' };
+const ACCION_RANKING = { action: 'ranking', title: 'Ver ranking' };
+
+/* ----------------------------- persistencia ------------------------------ */
+
+/** URL sintetica bajo la que se guarda cada entrada en CACHE_AVISOS. */
+const claveAvisos = (nombre) => absoluta(`./avisos/${nombre}.json`);
+
+async function leerAvisos(nombre) {
+  try {
+    const guardada = await (await caches.open(CACHE_AVISOS)).match(claveAvisos(nombre));
+    if (guardada) return await guardada.json();
+  } catch { /* copia ilegible */ }
+  return null;
+}
+
+async function guardarAvisos(nombre, datos) {
+  try {
+    const cache = await caches.open(CACHE_AVISOS);
+    await cache.put(
+      claveAvisos(nombre),
+      new Response(JSON.stringify(datos), { headers: { 'Content-Type': 'application/json' } }),
+    );
+  } catch { /* cuota llena: el siguiente ciclo volvera a intentarlo */ }
+}
+
+function normalizarPendientes(datos) {
+  const n = Number.isInteger(datos?.n) && datos.n > 0 ? datos.n : 0;
+  const cambios = Array.isArray(datos?.cambios) ? datos.cambios.slice(0, MAX_CAMBIOS) : [];
+  return { n, cambios };
+}
+
+/* ------------------------------ validacion ------------------------------- */
+
+const CODIGO_VALIDO = /^[A-Za-z0-9_]{1,24}$/; // region, cola, tier, division
+const codigoValido = (valor) => typeof valor === 'string' && CODIGO_VALIDO.test(valor);
+const textoValido = (valor, max) => typeof valor === 'string' && valor.length > 0 && valor.length <= max;
+const numeroValido = (valor) => typeof valor === 'number' && Number.isFinite(valor);
+
+function validarMiembro(bruto) {
+  if (!bruto || typeof bruto !== 'object') return null;
+  const { riotId, tier, division, lp } = bruto;
+  if (!textoValido(riotId, MAX_RIOT_ID) || !codigoValido(tier) || !codigoValido(division) || !numeroValido(lp)) return null;
+  return { riotId, tier, division, lp };
+}
+
+function validarJugadorTop(bruto) {
+  if (!bruto || typeof bruto !== 'object') return null;
+  const { clave, riotId, lp } = bruto;
+  if (!textoValido(clave, 100) || !textoValido(riotId, MAX_RIOT_ID) || !numeroValido(lp)) return null;
+  return { clave, riotId, lp };
+}
+
+/**
+ * Valida tipos y topes de un AVISOS_DATOS antes de usar nada. Cada parte que
+ * no cumple se descarta por separado (queda null).
+ */
+function validarDatosAvisos(mensaje) {
+  const salida = { config: null, ranking: null, grupo: null };
+  const { config, ranking, grupo } = mensaje;
+
+  if (config && typeof config === 'object') {
+    const miembros = Array.isArray(config.grupo?.miembros)
+      ? config.grupo.miembros.filter((r) => textoValido(r, MAX_RIOT_ID)).slice(0, MAX_MIEMBROS_AVISOS)
+      : [];
+    salida.config = {
+      activados: config.activados === true,
+      region: codigoValido(config.region) ? config.region : null,
+      cola: codigoValido(config.cola) ? config.cola : null,
+      tier: codigoValido(config.tier) ? config.tier : null,
+      division: codigoValido(config.division) ? config.division : null,
+      grupo: { miembros, cola: codigoValido(config.grupo?.cola) ? config.grupo.cola : null },
+    };
+  }
+
+  if (ranking && typeof ranking === 'object') {
+    const { region, cola, tier, division } = ranking;
+    const top3 = Array.isArray(ranking.top3) && ranking.top3.length >= 1 && ranking.top3.length <= 3
+      ? ranking.top3.map(validarJugadorTop)
+      : [null];
+    if ([region, cola, tier, division].every(codigoValido) && top3.every(Boolean)) {
+      salida.ranking = { clave: `${region}|${cola}|${tier}|${division}`, region, cola, tier, division, top3 };
+    }
+  }
+
+  if (grupo && typeof grupo === 'object') {
+    const miembros = Array.isArray(grupo.miembros) && grupo.miembros.length <= MAX_MIEMBROS_AVISOS
+      ? grupo.miembros.map(validarMiembro)
+      : [null];
+    if (codigoValido(grupo.region) && codigoValido(grupo.cola) && miembros.every(Boolean)) {
+      salida.grupo = { region: grupo.region, cola: grupo.cola, miembros };
+    }
+  }
+
+  return salida;
+}
+
+/* -------------------------------- textos --------------------------------- */
+
+const puntuacion = ({ tier, division, lp }) => {
+  const indice = ORDEN_TIERS.indexOf(tier);
+  return indice < 0 ? -1 : indice * 1_000_000 + (VALOR_DIVISION[division] ?? 0) * 10_000 + lp;
+};
+
+/** "Oro II" o "Retador" (la elite no muestra division), como nombreRango() en js/ui.js. */
+const nombreLiga = ({ tier, division }) =>
+  TIERS_APEX.has(tier) ? NOMBRE_TIER[tier] : `${NOMBRE_TIER[tier] ?? tier} ${division}`;
+
+function textoCambioGrupo(riotId, previo, actual) {
+  if (previo.tier !== actual.tier || previo.division !== actual.division) {
+    const sube = puntuacion(actual) >= puntuacion(previo);
+    return `${riotId} ${sube ? 'subió' : 'bajó'} a ${nombreLiga(actual)} (${actual.lp} LP)`;
+  }
+  const delta = actual.lp - previo.lp;
+  if (Math.abs(delta) < UMBRAL_LP) return null;
+  return `${riotId} ${delta > 0 ? 'ganó' : 'perdió'} ${Math.abs(delta)} LP (${nombreLiga(actual)} · ${actual.lp} LP)`;
+}
+
+function textoCambioRanking({ region, cola, tier, division, top3 }) {
+  const nombres = top3.map((j) => j.riotId);
+  const lista = nombres.length > 1 ? `${nombres.slice(0, -1).join(', ')} y ${nombres.at(-1)}` : nombres.join('');
+  const etiquetaRegion = ETIQUETA_REGION[region] ?? region.toUpperCase();
+  return `Nuevo top 3 en ${etiquetaRegion} · ${nombreLiga({ tier, division })} · ${NOMBRE_COLA[cola] ?? cola}: ${lista}`;
+}
+
+/* ------------------------- notificaciones y badge ------------------------ */
+
+const permisoConcedido = () => typeof self.Notification !== 'undefined' && self.Notification.permission === 'granted';
+
+/** Muestra (o reemplaza, por tag) una notificacion con las dos acciones. Devuelve si se mostro. */
+async function mostrarNotificacion(tag, titulo, cuerpo, vista) {
+  try {
+    await self.registration.showNotification(titulo, {
+      body: cuerpo,
+      tag,
+      renotify: true,
+      lang: 'es',
+      icon: absoluta('./iconos/icono-192.png'),
+      data: { vista },
+      actions: tag === 'ranking' ? [ACCION_RANKING, ACCION_GRUPO] : [ACCION_GRUPO, ACCION_RANKING],
+    });
+    return true;
+  } catch (error) {
+    console.warn('[SW] showNotification', error); // permiso retirado o host sin notificaciones
+    return false;
+  }
+}
+
+/** Una notificacion por tipo: todos los cambios del grupo juntos y el top 3 aparte. */
+async function mostrarAvisos(cambios) {
+  const grupo = cambios.filter((c) => c.tipo === 'grupo').map((c) => c.texto);
+  const ranking = cambios.filter((c) => c.tipo === 'ranking').map((c) => c.texto);
+  const tareas = [];
+  if (grupo.length > 0) tareas.push(mostrarNotificacion('grupo', 'Mi grupo · Ranking LAN', grupo.join('\n'), 'grupo'));
+  if (ranking.length > 0) tareas.push(mostrarNotificacion('ranking', 'Top 3 · Ranking LAN', ranking.join('\n'), 'global'));
+  await Promise.all(tareas);
+}
+
+/** Pone el distintivo en n (0 lo limpia). Devuelve 'establecido' | 'limpio' | 'no-soportado' | 'error'. */
+async function actualizarDistintivo(n) {
+  if (!('setAppBadge' in self.navigator)) return 'no-soportado';
+  try {
+    if (n > 0) await self.navigator.setAppBadge(n);
+    else await self.navigator.clearAppBadge();
+    return n > 0 ? 'establecido' : 'limpio';
+  } catch {
+    return 'error';
+  }
+}
+
+async function difundirAvisos(mensaje) {
+  const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const cliente of clientes) cliente.postMessage(mensaje);
+}
+
+/* ------------------------------- diferencias ----------------------------- */
+
+/**
+ * Compara ranking y grupo con la instantanea, la actualiza, y si los avisos
+ * estan activados notifica, acumula pendientes y actualiza el distintivo.
+ * La primera vez que se ve una clave solo se guarda.
+ */
+async function procesarAvisos({ ranking, grupo }, origen) {
+  const guardada = await leerAvisos('instantanea');
+  const instantanea = {
+    grupo: guardada?.grupo && typeof guardada.grupo === 'object' ? guardada.grupo : {},
+    ranking: guardada?.ranking && typeof guardada.ranking === 'object' ? guardada.ranking : {},
+  };
+  const momento = new Date().toISOString();
+  const cambios = [];
+
+  if (grupo) {
+    for (const miembro of grupo.miembros) {
+      const clave = `${grupo.region}|${grupo.cola}|${miembro.riotId.toLowerCase()}`;
+      const actual = { tier: miembro.tier, division: miembro.division, lp: miembro.lp };
+      const previo = instantanea.grupo[clave];
+      if (previo && typeof previo === 'object') {
+        const texto = textoCambioGrupo(miembro.riotId, previo, actual);
+        if (texto) cambios.push({ tipo: 'grupo', texto, momento });
+      }
+      instantanea.grupo[clave] = actual;
+    }
+  }
+
+  if (ranking) {
+    const previo = instantanea.ranking[ranking.clave];
+    const secuencia = (top3) => (Array.isArray(top3) ? top3.map((j) => j?.clave).join(',') : '');
+    if (previo && secuencia(previo.top3) !== secuencia(ranking.top3)) {
+      cambios.push({ tipo: 'ranking', texto: textoCambioRanking(ranking), momento });
+    }
+    instantanea.ranking[ranking.clave] = { top3: ranking.top3 };
+  }
+
+  await guardarAvisos('instantanea', instantanea);
+
+  const config = await leerAvisos('config');
+  const pendientes = normalizarPendientes(await leerAvisos('pendientes'));
+  let badge = 'omitido';
+  if (config?.activados === true && permisoConcedido()) {
+    if (cambios.length > 0) {
+      await mostrarAvisos(cambios);
+      pendientes.n += cambios.length;
+      pendientes.cambios = [...cambios, ...pendientes.cambios].slice(0, MAX_CAMBIOS);
+      await guardarAvisos('pendientes', pendientes);
+    }
+    badge = await actualizarDistintivo(pendientes.n);
+  }
+
+  await difundirAvisos({ tipo: 'AVISOS_PENDIENTES', n: pendientes.n, cambios: pendientes.cambios, badge, origen });
+}
+
+/** AVISOS_DATOS: guarda la config si viene y procesa ranking/grupo si vienen. */
+async function recibirDatosAvisos(mensaje) {
+  const { config, ranking, grupo } = validarDatosAvisos(mensaje);
+  if (config) await guardarAvisos('config', config);
+  if (ranking || grupo) await procesarAvisos({ ranking, grupo }, 'datos');
+}
+
+/** AVISOS_PROBAR: notificacion de ejemplo y distintivo en 1 (sin tocar pendientes). */
+async function mostrarPrueba() {
+  const mostrado = await mostrarNotificacion(
+    'prueba',
+    'Aviso de prueba · Ranking LAN',
+    'Así avisaremos de las subidas y bajadas de tu grupo y de los cambios del top 3.',
+    'global',
+  );
+  const pendientes = normalizarPendientes(await leerAvisos('pendientes'));
+  const badge = await actualizarDistintivo(Math.max(1, pendientes.n));
+  await difundirAvisos({ tipo: 'AVISOS_PROBADO', mostrado, badge });
+}
+
+/** AVISOS_VISTOS: la pagina recupero el foco; pendientes a 0 y distintivo limpio. */
+async function marcarVistos() {
+  const pendientes = normalizarPendientes(await leerAvisos('pendientes'));
+  if (pendientes.n !== 0) {
+    pendientes.n = 0;
+    await guardarAvisos('pendientes', pendientes);
+  }
+  const badge = await actualizarDistintivo(0);
+  await difundirAvisos({ tipo: 'AVISOS_PENDIENTES', n: 0, cambios: pendientes.cambios, badge, origen: 'vistos' });
+}
+
+/* ------------------------ sincronizacion periodica ----------------------- */
+
+/** Convierte el documento del proxy (/api/ranking) en la forma `ranking` del contrato. */
+function rankingDesdeDocumento(documento, { region, cola, tier, division }) {
+  const lista = Array.isArray(documento.jugadores) ? documento.jugadores : [];
+  const top3 = [...lista]
+    .sort((a, b) => (a.puesto ?? 0) - (b.puesto ?? 0))
+    .slice(0, 3)
+    .map((j) => {
+      const nombre = j.nombre ?? j.gameName ?? '';
+      const tag = j.tag ?? j.tagLine ?? '';
+      const riotId = j.riotId || (nombre ? (tag ? `${nombre}#${tag}` : nombre) : null);
+      return { clave: j.puuid ?? riotId, riotId, lp: Number(j.lp ?? j.leaguePoints ?? 0) };
+    });
+  // Con nombres pendientes de resolver no se compara: el top 3 cambiaria solo por eso.
+  if (top3.length === 0 || top3.some((j) => j.clave == null || j.riotId == null)) return null;
+  return {
+    region: (documento.plataforma ?? region).toLowerCase(),
+    cola: documento.cola ?? cola,
+    tier: documento.tier ?? tier,
+    division: documento.division ?? division,
+    top3,
+  };
+}
+
+/** Descarga por el SW y guarda en CACHE_DATOS bajo la MISMA URL que usa la pagina. */
+async function descargarYGuardar(url) {
+  const respuesta = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!respuesta.ok) throw new Error(`${new URL(url).pathname} -> ${respuesta.status}`);
+  const cache = await caches.open(CACHE_DATOS);
+  await cache.put(url, respuesta.clone());
+  return respuesta.json();
+}
+
+/**
+ * Lee la config, consulta al proxy el ranking seleccionado y a cada integrante
+ * del grupo y pasa el resultado por procesarAvisos(). Fallos de red: se omite
+ * esa parte con console.warn. La usan periodicsync y "Comprobar ahora".
+ */
+async function sincronizarAvisos() {
+  const config = await leerAvisos('config');
+  if (!config?.activados) return;
+
+  const { region, cola, tier, division } = config;
+  let ranking = null;
+  let grupo = null;
+
+  if ([region, cola, tier, division].every(codigoValido)) {
+    // Mismo orden de parametros que urlProxy() en js/api.js.
+    const url = absoluta(`./api/ranking?${new URLSearchParams({ region, cola, tier, division })}`);
+    try {
+      const bruto = rankingDesdeDocumento(await descargarYGuardar(url), config);
+      const { ranking: valido } = validarDatosAvisos({ ranking: bruto ?? {} });
+      ranking = valido;
+    } catch (error) {
+      console.warn('[SW] sincronizar ranking', error.message);
+    }
+  }
+
+  const miembros = Array.isArray(config.grupo?.miembros) ? config.grupo.miembros : [];
+  const colaGrupo = config.grupo?.cola;
+  if (miembros.length > 0 && codigoValido(colaGrupo) && codigoValido(region)) {
+    const resultados = await Promise.allSettled(miembros.map(async (riotId) => {
+      // Mismo orden de parametros que urlJugador() en js/api.js.
+      const documento = await descargarYGuardar(absoluta(`./api/jugador?${new URLSearchParams({ riotId, region })}`));
+      const entrada = documento.colas?.[colaGrupo];
+      if (!entrada || !entrada.tier) return null; // sin clasificar en esta cola
+      return { riotId: documento.riotId || riotId, tier: entrada.tier, division: entrada.division ?? 'I', lp: Number(entrada.lp ?? 0) };
+    }));
+    for (const r of resultados) {
+      if (r.status === 'rejected') console.warn('[SW] sincronizar jugador', r.reason?.message);
+    }
+    const lista = resultados.filter((r) => r.status === 'fulfilled' && r.value).map((r) => r.value);
+    const { grupo: valido } = validarDatosAvisos({ grupo: { region, cola: colaGrupo, miembros: lista } });
+    grupo = valido;
+  }
+
+  await procesarAvisos({ ranking, grupo }, 'sincronizacion');
+}
+
+/* ------------------------------ navegacion ------------------------------- */
+
+/**
+ * Lleva al usuario a la vista pedida: enfoca una ventana abierta y le manda
+ * AVISOS_IR; si no hay ninguna, abre la app. focus()/openWindow() solo estan
+ * permitidos dentro de notificationclick; fuera (AVISOS_ABRIR) se degradan a
+ * postMessage sin ruido.
+ */
+async function abrirDestino(vista) {
+  const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  if (clientes.length > 0) {
+    const cliente = clientes.find((c) => c.focused) ?? clientes[0];
+    try { await cliente.focus(); } catch { /* fuera de un clic de notificacion */ }
+    cliente.postMessage({ tipo: 'AVISOS_IR', vista });
+    return;
+  }
+  try {
+    await self.clients.openWindow(absoluta(`./?vista=${vista}`));
+  } catch (error) {
+    console.warn('[SW] openWindow', error);
+  }
+}
+
+self.addEventListener('notificationclick', (evento) => {
+  evento.notification.close();
+  const vista = evento.action === 'ranking' ? 'global'
+    : evento.action === 'grupo' ? 'grupo'
+      : (evento.notification.data?.vista ?? 'global');
+  evento.waitUntil(abrirDestino(vista));
+});
+
+// Periodic Background Sync (solo con la app instalada): js/avisos.js registra
+// el tag 'avisos' con minInterval de 12 h.
+self.addEventListener('periodicsync', (evento) => {
+  if (evento.tag === TAG_SYNC_AVISOS) evento.waitUntil(sincronizarAvisos());
+});
