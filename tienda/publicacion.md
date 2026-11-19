@@ -100,8 +100,8 @@ Abrir la app desde el menú Inicio y repasar:
 - El pie y la ayuda (botón **Ayuda**) muestran el aviso de Riot Games en inglés y su
   traducción, y el enlace **Política de privacidad** abre `/privacidad.html`.
 
-Si alguna prueba falla, corregir en el repositorio, redesplegar (paso 7 del README) y repetir:
-el paquete no cambia porque solo contiene la URL.
+Si alguna prueba falla, corregir en el repositorio, redesplegar (`bash despliegue/desplegar.sh`,
+ver README → Desplegar) y repetir: el paquete no cambia porque solo contiene la URL.
 
 ## 5. Enviar a certificación
 
