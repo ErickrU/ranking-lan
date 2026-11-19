@@ -396,6 +396,12 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
 }
 
 /* ---- Modo Window Controls Overlay --------------------------------------- */
+/* Invariante: la franja la define env(titlebar-area-*). En Windows los botones
+   nativos (minimizar, maximizar, cerrar) quedan FUERA de ella, a la derecha; en
+   macOS, los semaforos a la izquierda. Los seis controles son acciones de la app
+   y no duplican botones de ventana. overflow: clip garantiza que nada se pinte
+   sobre la zona nativa aunque un idioma o el zoom ensanchen el contenido; bajo
+   760 px, wco-angosto baja la barra a su propia fila (js/registro-sw.js). */
 .wco-visible .cabecera {
   position: fixed;
   z-index: 40;
@@ -407,6 +413,8 @@ code { font-family: var(--mono); font-size: 0.85em; color: var(--cian); }
   height: var(--titlebar-height);
   min-height: var(--titlebar-height);
   padding: 2px 8px;
+  overflow: clip;
+  overflow-clip-margin: 2px;
 }
 .wco-visible .cabecera__logo { width: 28px; height: 28px; }
 .wco-visible .cabecera__titulo { font-size: 0.82rem; letter-spacing: 0.18em; }
@@ -1496,8 +1504,45 @@ html[data-tema="claro"] .dialogo::backdrop { background: rgba(13, 23, 38, 0.5); 
   gap: 10px;
 }
 .pie__legal { font-size: 0.68rem; line-height: 1.6; color: var(--texto-3); }
+/* La traduccion del aviso de Riot queda vacia en ingles: no ocupa sitio. */
+.pie__legal:empty { display: none; }
+.pie__enlaces,
+.ayuda__acerca {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--linea);
+  font-size: 0.78rem;
+  color: var(--texto-2);
+}
+.ayuda__acerca { display: grid; gap: 8px; }
+.ayuda__acerca h4 {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--texto-2);
+}
+.ayuda__acerca a { color: var(--cian); text-decoration-color: var(--linea-fuerte); }
 .pie__meta { font-size: 0.72rem; color: var(--texto-2); }
 .pie a { color: var(--cian); text-decoration-color: var(--linea-fuerte); }
+
+/* ==========================================================================
+   PAGINA LEGAL (privacidad.html): texto largo dentro de un .panel
+   ========================================================================== */
+.legal { display: grid; gap: 14px; font-size: 0.88rem; line-height: 1.65; color: var(--texto-2); }
+.legal h1 { font-size: 1.25rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--texto); }
+.legal h2 {
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--cian);
+  font-size: 0.86rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--texto);
+}
+.legal ul { margin-left: 18px; display: grid; gap: 6px; }
+.legal a { color: var(--cian); text-decoration-color: var(--linea-fuerte); }
+.legal time { font-family: var(--mono); color: var(--texto); }
+.legal__volver { font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; }
 
 /* ==========================================================================
    RESPONSIVO

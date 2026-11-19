@@ -91,6 +91,7 @@ const DICCIONARIOS = {
     'ayuda.i6.t': 'Avisos:',
     'ayuda.i6.d': 'en la sección «Avisos y distintivos», al final de la página, pulsa «Activar avisos» y concede el permiso. Recibirás una notificación cuando alguien de tu grupo suba o baje de liga o gane o pierda 20 LP o más, y cuando cambie el top 3 de la región y cola elegidas; el número de cambios sin ver aparece como distintivo en el icono de la app y se borra al volver a ella. «Probar aviso» muestra un ejemplo y «Comprobar ahora» consulta los datos al momento.',
     'ayuda.nota': 'Los datos provienen de la API oficial de Riot Games y no incluyen estimaciones de MMR: solo la clasificación oficial.',
+    'ayuda.acerca': 'Acerca de',
     'tabs.aria': 'Secciones de la aplicación',
     'tab.global': 'Ranking regional',
     'tab.grupo': 'Mi grupo',
@@ -103,6 +104,8 @@ const DICCIONARIOS = {
     'fuente.cargando': 'Cargando…',
     'estado.actualizado': 'Actualizado {tiempo}',
     'aviso.demo': 'Modo demostración.',
+    'aviso.servidor': 'Sin conexión con el servidor.',
+    'aviso.servidorTexto': 'No se pudo contactar con el servidor de Ranking LAN. Se muestran los últimos datos guardados en este dispositivo; vuelve a intentarlo en unos minutos.',
 
     'control.region': 'Región',
     'control.cola': 'Cola',
@@ -355,7 +358,10 @@ const DICCIONARIOS = {
     'sw.nuevaVersion': 'nueva versión lista para instalarse',
     'sw.error': 'no se pudo registrar ({error})',
 
-    'pie.legal': 'Ranking LAN no está respaldado por Riot Games y no refleja las opiniones ni los puntos de vista de Riot Games ni de nadie relacionado oficialmente con la producción o gestión de las propiedades de Riot Games. Riot Games y todas las propiedades asociadas son marcas comerciales o marcas registradas de Riot Games, Inc.',
+    // El aviso legal oficial de Riot va fijo en ingles en el HTML; esta es su traduccion.
+    'pie.legalTraduccion': 'Ranking LAN no está respaldado por Riot Games y no refleja las opiniones ni los puntos de vista de Riot Games ni de nadie relacionado oficialmente con la producción o gestión de las propiedades de Riot Games. Riot Games y todas las propiedades asociadas son marcas comerciales o marcas registradas de Riot Games, Inc.',
+    'pie.privacidad': 'Política de privacidad',
+    'pie.soporte': 'Soporte',
     'pie.meta1': 'Proyecto académico UTEC · Aplicaciones Web Progresivas · datos vía',
     'pie.meta2': '(league-v4, account-v1 y match-v5)',
   },
@@ -433,6 +439,7 @@ const DICCIONARIOS = {
     'ayuda.i6.t': 'Notifications:',
     'ayuda.i6.d': 'in the “Notifications and badges” section at the bottom of the page, press “Turn on notifications” and grant the permission. You will be notified when someone in your group moves up or down a tier or gains or loses 20 LP or more, and when the top 3 of the selected region and queue changes; the number of unseen changes shows as a badge on the app icon and clears when you come back. “Test notification” shows an example and “Check now” queries the data right away.',
     'ayuda.nota': 'Data comes from the official Riot Games API and includes no MMR estimates: official standings only.',
+    'ayuda.acerca': 'About',
     'tabs.aria': 'App sections',
     'tab.global': 'Regional ranking',
     'tab.grupo': 'My group',
@@ -445,6 +452,8 @@ const DICCIONARIOS = {
     'fuente.cargando': 'Loading…',
     'estado.actualizado': 'Updated {tiempo}',
     'aviso.demo': 'Demo mode.',
+    'aviso.servidor': 'Server unreachable.',
+    'aviso.servidorTexto': 'Could not reach the Ranking LAN server. Showing the last data saved on this device; try again in a few minutes.',
 
     'control.region': 'Region',
     'control.cola': 'Queue',
@@ -697,7 +706,10 @@ const DICCIONARIOS = {
     'sw.nuevaVersion': 'new version ready to install',
     'sw.error': 'could not register ({error})',
 
-    'pie.legal': 'Ranking LAN isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.',
+    // The official Riot notice is already in English in the HTML: no translation needed.
+    'pie.legalTraduccion': '',
+    'pie.privacidad': 'Privacy policy',
+    'pie.soporte': 'Support',
     'pie.meta1': 'UTEC academic project · Progressive Web Apps · data via',
     'pie.meta2': '(league-v4, account-v1 and match-v5)',
   },

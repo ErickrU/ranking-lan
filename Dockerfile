@@ -9,8 +9,13 @@ FROM node:22-alpine3.24
 # los parches en cada reconstruccion; en despliegue se construye con --pull.
 RUN apk upgrade --no-cache
 
+# HOST=0.0.0.0: dentro del contenedor el balanceador (ALB) debe alcanzar la
+# tarea, asi que el proxy escucha en todas las interfaces de la tarea. La
+# frontera es el security group de la tarea, que solo admite al del ALB. Fuera
+# del contenedor el proxy escucha solo en 127.0.0.1 (valor por defecto).
 ENV NODE_ENV=production \
-    PUERTO=8080
+    PUERTO=8080 \
+    HOST=0.0.0.0
 
 WORKDIR /app
 

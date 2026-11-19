@@ -11,16 +11,26 @@
  *     muestra notificaciones con acciones (Browser.grantPermissions concede
  *     el permiso por CDP), los cambios sinteticos generan avisos y pendientes,
  *     el foco los limpia y "Comprobar ahora" escribe la instantanea
+ *   - legal y privacidad: el aviso oficial de Riot (ingles + traduccion) esta
+ *     en el pie y en la ayuda, /privacidad.html se sirve, los dotfiles no, y el
+ *     manifest trae launch_handler y categorias para la Microsoft Store
+ *   - barra de titulo: el CSS usa las cuatro env(titlebar-area-*), ningun
+ *     control duplica minimizar/maximizar/cerrar y bajo WCO simulado todos
+ *     quedan dentro de la franja (overflow: clip)
  *   - el panel de widgets (simulador del Widgets Board) abre, lista el widget
  *     del manifest, lo pinta con datos reales y persiste su estado
  *   - la app sigue funcionando offline (segunda carga sin red)
+ *   - servidor caido (prueba real): arranca un proxy auxiliar, carga la app,
+ *     lo mata y comprueba que con red la app explica que el servidor no
+ *     responde (#aviso-servidor), sirve los datos desde cache y sobrevive a
+ *     una recarga sin excepciones
  *
  * Ademas captura las dos imagenes que declara manifest.webmanifest
  * (screenshots), usadas por Android para enriquecer el dialogo de instalacion,
  * y la captura del widget (widgets/top3-lan-captura.png) que declara el
  * miembro `widgets` del manifest.
  *
- * Uso:  node herramientas/verificar.mjs [--url http://localhost:8137/]
+ * Uso:  node herramientas/verificar.mjs [--url http://localhost:8137/] [--cdp 9333] [--caida 8139]
  */
 
 import { spawn } from 'node:child_process';
@@ -38,6 +48,8 @@ const flag = (n, def) => {
 };
 const URL_APP = flag('url', 'http://localhost:8137/');
 const PUERTO_CDP = Number(flag('cdp', 9333));
+/** Puerto del proxy auxiliar que se arranca y se mata en la seccion «Servidor caído». */
+const PUERTO_CAIDA = Number(flag('caida', 8139));
 
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -121,6 +133,7 @@ const chrome = spawn(CHROME, [
 ], { stdio: 'ignore' });
 
 let cdp;
+let proxyCaida; // proxy auxiliar de la seccion «Servidor caído»; se mata en el finally
 let codigoSalida = 0;
 
 try {
@@ -809,6 +822,44 @@ try {
     interruptorAvisos.encendido.marcado && interruptorAvisos.encendido.guardado === true && !interruptorAvisos.encendido.probar,
     `apagado: «${interruptorAvisos.apagado.estado}»`);
 
+  /* --- Legal y privacidad ------------------------------------------------ */
+  console.log('\nLegal y privacidad');
+
+  // El dotfile se pide desde Node, no desde la pagina: un 404 provocado a
+  // proposito ensuciaria la consola del navegador (seccion «Consola»).
+  let dotfile = 0;
+  try { dotfile = (await fetch(new URL('./.env.example', URL_APP))).status; } catch { dotfile = -1; }
+
+  const legal = await cdp.evaluar(`(async () => {
+    const cuerpo = document.body.textContent;
+    const privacidad = await fetch('./privacidad.html');
+    const textoPrivacidad = privacidad.ok ? await privacidad.text() : '';
+    const manifiesto = await (await fetch('./manifest.webmanifest')).json();
+    return {
+      ingles: cuerpo.includes("Ranking LAN isn't endorsed by Riot Games"),
+      traduccion: cuerpo.includes('no está respaldado por Riot Games'),
+      enlaceAyuda: !!document.querySelector('#dialogo-ayuda .ayuda__acerca a[href$="privacidad.html"]'),
+      privacidad: { ok: privacidad.ok, estado: privacidad.status,
+                    riot: textoPrivacidad.includes("isn't endorsed by Riot Games"),
+                    contacto: textoPrivacidad.includes('github.com/ErickrU/ranking-lan/issues'),
+                    fecha: textoPrivacidad.includes('<time datetime="') },
+      launch: manifiesto.launch_handler?.client_mode ?? null,
+      categorias: manifiesto.categories ?? [],
+    };
+  })()`);
+  comprobar('El aviso legal de Riot (inglés oficial) está en la página', legal.ingles);
+  comprobar('Y su traducción al español', legal.traduccion);
+  comprobar('La ayuda enlaza la política de privacidad', legal.enlaceAyuda);
+  comprobar('/privacidad.html se sirve con aviso de Riot, contacto y fecha',
+    legal.privacidad.ok && legal.privacidad.riot && legal.privacidad.contacto && legal.privacidad.fecha,
+    `HTTP ${legal.privacidad.estado} · riot ${legal.privacidad.riot} · contacto ${legal.privacidad.contacto} · fecha ${legal.privacidad.fecha}`);
+  comprobar('Los dotfiles no se sirven (/.env.example → 404)', dotfile === 404, `HTTP ${dotfile}`);
+  comprobar('El manifest declara launch_handler.client_mode',
+    Array.isArray(legal.launch) ? legal.launch.length > 0 : typeof legal.launch === 'string',
+    JSON.stringify(legal.launch));
+  comprobar('La primera categoría del manifest es entertainment (Microsoft Store)',
+    legal.categorias[0] === 'entertainment', legal.categorias.join(', '));
+
   /* --- Panel de widgets -------------------------------------------------- */
   console.log('\nPanel de widgets');
 
@@ -1065,6 +1116,29 @@ try {
     persistencia.guardado.includes('top3-lan') && persistencia.tarjetas === 1 && persistencia.conTop1,
     `${JSON.stringify(persistencia.guardado)} · ${persistencia.tarjetas} tarjeta montada sin volver a agregar`);
 
+  /* --- Barra de título --------------------------------------------------- */
+  console.log('\nBarra de título');
+
+  // env() no se puede simular en headless (la cabecera cae a width: 100%), asi
+  // que la geometria real de la franja se comprueba leyendo el CSS y la
+  // invariante «los controles caben en la caja de .cabecera» se mide en el modo
+  // WCO simulado de mas abajo.
+  const titulo = await cdp.evaluar(`(async () => {
+    const css = await (await fetch('./css/estilos.css')).text();
+    const patron = /minimi[sz]|maximi[sz]|cerrar ventana|close window/i;
+    const nativos = [...document.querySelectorAll('[data-control-ventana]')]
+      .filter(b => patron.test(b.getAttribute('aria-label') ?? '') || patron.test(b.title ?? ''))
+      .map(b => b.id);
+    return {
+      env: ['x', 'y', 'width', 'height'].filter(eje => !css.includes('env(titlebar-area-' + eje + ',')),
+      nativos,
+    };
+  })()`);
+  comprobar('El CSS posiciona la cabecera con las cuatro env(titlebar-area-*) y fallback',
+    titulo.env.length === 0, titulo.env.length ? `faltan: ${titulo.env.join(', ')}` : '');
+  comprobar('Ningún control duplica minimizar, maximizar o cerrar',
+    titulo.nativos.length === 0, titulo.nativos.join(', '));
+
   // Chrome headless no expone navigator.windowControlsOverlay. Se inyecta una
   // simulacion ANTES de que cargue el modulo (Page.addScriptToEvaluateOnNewDocument)
   // para que registre su listener en el objeto simulado, y se recarga.
@@ -1091,9 +1165,21 @@ try {
     overlay.rect = { x: 0, y: 0, width: 1100, height: 40 };
     overlay.dispatchEvent(new Event('geometrychange'));
     await new Promise(r => setTimeout(r, 350));
+    const cabecera = document.querySelector('.cabecera');
+    const caja = cabecera.getBoundingClientRect();
+    // Todo lo pulsable de la barra debe quedar dentro de la caja de la franja:
+    // asi nada se pinta sobre los botones nativos de la ventana.
+    const pulsables = [...document.querySelectorAll('[data-control-ventana]'),
+                       document.getElementById('sel-idioma'), document.getElementById('btn-actualizar')];
+    const fuera = pulsables.filter(n => {
+      const r = n.getBoundingClientRect();
+      return r.left < caja.left || r.right > caja.right;
+    }).map(n => n.id);
     const ancha = { visible: document.body.classList.contains('wco-visible'),
                     angosta: document.body.classList.contains('wco-angosto'),
-                    fija: getComputedStyle(document.querySelector('.cabecera')).position };
+                    fija: getComputedStyle(cabecera).position,
+                    overflow: getComputedStyle(cabecera).overflow,
+                    fuera, caja: Math.round(caja.width) };
     overlay.rect = { x: 0, y: 0, width: 500, height: 40 };
     overlay.dispatchEvent(new Event('geometrychange'));
     await new Promise(r => setTimeout(r, 350));
@@ -1106,6 +1192,9 @@ try {
   comprobar('Con WCO visible la barra se fija a la franja de título',
     wco.ancha.visible && !wco.ancha.angosta && wco.ancha.fija === 'fixed',
     `visible ${wco.ancha.visible} · position ${wco.ancha.fija}`);
+  comprobar('Bajo WCO los controles quedan dentro de la franja de título',
+    wco.ancha.fuera.length === 0 && wco.ancha.overflow.includes('clip'),
+    `caja ${wco.ancha.caja} px · overflow ${wco.ancha.overflow}${wco.ancha.fuera.length ? ` · fuera: ${wco.ancha.fuera.join(', ')}` : ''}`);
   comprobar('Con franja angosta baja a una fila propia', wco.estrecha.angosta);
   comprobar('Al apagar la superposición vuelve a cabecera web', wco.apagado);
 
@@ -1361,6 +1450,95 @@ try {
     offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
   });
 
+  /* --- Servidor caído ---------------------------------------------------- */
+  console.log('\nServidor caído');
+
+  // Prueba REAL, no emulada: un proxy auxiliar en otro puerto (origen propio,
+  // con su propio service worker y sus propias caches), se carga la app, se mata
+  // el proceso y se comprueba que, con red, la app explica que el servidor no
+  // responde (#aviso-servidor), sirve la copia guardada y sobrevive a una recarga.
+  const excepcionesAntes = cdp.eventos.filter((e) => e.method === 'Runtime.exceptionThrown').length;
+  proxyCaida = spawn(process.execPath,
+    [join(RAIZ, 'servidor', 'proxy.mjs'), '--puerto', String(PUERTO_CAIDA)], { stdio: 'ignore' });
+  let estadoCaida = null;
+  for (let intento = 0; intento < 40 && !estadoCaida; intento++) {
+    await espera(250);
+    try {
+      const r = await fetch(`http://127.0.0.1:${PUERTO_CAIDA}/api/estado`);
+      if (r.ok) estadoCaida = await r.json();
+    } catch { /* aun arrancando */ }
+  }
+  comprobar('El proxy auxiliar arranca', !!estadoCaida,
+    `puerto ${PUERTO_CAIDA}${estadoCaida ? ` · ${estadoCaida.claveConfigurada ? 'datos reales' : 'datos de demostración'}` : ''}`);
+
+  await cdp.enviar('Page.navigate', { url: `http://localhost:${PUERTO_CAIDA}/` });
+  let cargaCaida = { filas: 0, controlado: false };
+  for (let intento = 0; intento < 80; intento++) {
+    await espera(250);
+    try {
+      cargaCaida = await cdp.evaluar(`({
+        filas: document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length,
+        controlado: !!navigator.serviceWorker.controller,
+      })`);
+      if (cargaCaida.filas > 0 && cargaCaida.controlado) break;
+    } catch { /* navegando */ }
+  }
+  comprobar('La app carga desde el proxy auxiliar y el SW toma el control',
+    cargaCaida.filas > 0 && cargaCaida.controlado,
+    `${cargaCaida.filas} filas · controlado ${cargaCaida.controlado}`);
+
+  // Se mata el servidor y se espera a que el puerto rechace conexiones.
+  proxyCaida.kill('SIGKILL');
+  for (let intento = 0; intento < 40; intento++) {
+    try { await fetch(`http://127.0.0.1:${PUERTO_CAIDA}/api/estado`); } catch { break; }
+    await espera(100);
+  }
+
+  const caida = await cdp.evaluar(`(async () => {
+    document.getElementById('btn-actualizar').click();
+    const aviso = document.getElementById('aviso-servidor');
+    let visible = false;
+    for (let i = 0; i < 48; i++) { // hasta 12 s
+      await new Promise(r => setTimeout(r, 250));
+      visible = getComputedStyle(aviso).display !== 'none';
+      if (visible) break;
+    }
+    return {
+      enLinea: navigator.onLine,
+      visible,
+      texto: aviso.textContent.trim(),
+      fuente: document.getElementById('chip-fuente').dataset.fuente,
+      filas: document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length,
+    };
+  })()`);
+  comprobar('Con red pero sin servidor aparece el aviso en español',
+    caida.enLinea && caida.visible && /servidor/i.test(caida.texto),
+    `onLine ${caida.enLinea} · «${caida.texto.slice(0, 60)}…»`);
+  // La demo sigue siendo demo aunque venga de la cache (js/api.js): solo con
+  // datos reales el chip pasa a «Desde caché».
+  const fuenteEsperada = estadoCaida?.claveConfigurada ? 'cache' : 'demo';
+  comprobar('La tabla conserva filas desde la copia guardada',
+    caida.filas > 0 && caida.fuente === fuenteEsperada,
+    `${caida.filas} filas · chip ${caida.fuente} (esperado ${fuenteEsperada})`);
+
+  await cdp.enviar('Page.reload');
+  let recarga = { filas: 0, visible: false };
+  for (let intento = 0; intento < 60; intento++) {
+    await espera(250);
+    try {
+      recarga = await cdp.evaluar(`({
+        filas: document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length,
+        visible: getComputedStyle(document.getElementById('aviso-servidor')).display !== 'none',
+      })`);
+      if (recarga.filas > 0 && recarga.visible) break;
+    } catch { /* recargando */ }
+  }
+  const excepcionesDespues = cdp.eventos.filter((e) => e.method === 'Runtime.exceptionThrown').length;
+  comprobar('Recargar con el servidor caído mantiene la app funcional y el aviso',
+    recarga.filas > 0 && recarga.visible, `${recarga.filas} filas · aviso ${recarga.visible ? 'visible' : 'oculto'}`);
+  comprobar('Sin excepciones durante la caída del servidor',
+    excepcionesDespues === excepcionesAntes, `${excepcionesDespues - excepcionesAntes} nuevas`);
+
   /* --- Consola limpia --------------------------------------------------- */
   console.log('\nConsola');
   const errores = cdp.eventos
@@ -1372,8 +1550,9 @@ try {
       e.params.entry?.text ??
       e.params.exceptionDetails?.exception?.description ??
       e.params.args?.map((a) => a.value ?? a.description).join(' '))
-    // Al emular offline es normal que fetch falle: ese error lo provoca la prueba.
-    .filter((texto) => texto && !/ERR_INTERNET_DISCONNECTED|Failed to load resource.*offline/i.test(texto));
+    // Al emular offline o matar el proxy auxiliar es normal que fetch falle:
+    // esos errores los provoca la propia prueba.
+    .filter((texto) => texto && !/ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_REFUSED|Failed to load resource.*offline/i.test(texto));
 
   comprobar('Sin errores de consola ni excepciones', errores.length === 0,
     errores.length ? `\n      ${errores.join('\n      ')}` : '');
@@ -1393,6 +1572,7 @@ try {
   codigoSalida = 1;
 } finally {
   cdp?.cerrar();
+  if (proxyCaida && proxyCaida.exitCode === null) proxyCaida.kill('SIGKILL');
   chrome.kill('SIGKILL');
   await espera(300);
   rmSync(perfil, { recursive: true, force: true });

@@ -19,6 +19,8 @@
  * Uso:
  *   node servidor/proxy.mjs
  *   RIOT_API_KEY=RGAPI-xxxx node servidor/proxy.mjs --puerto 8080 --top 30
+ *   node servidor/proxy.mjs --host 0.0.0.0   (exponerlo a la red a proposito;
+ *                                            por defecto escucha solo en 127.0.0.1)
  */
 
 import { createServer } from 'node:http';
@@ -46,6 +48,13 @@ function flag(nombre) {
 
 const CONFIG = {
   puerto: Number(flag('puerto') ?? process.env.PUERTO ?? process.env.PORT ?? 8080),
+  /**
+   * Interfaz de escucha. Por defecto solo loopback: un servidor de desarrollo
+   * no debe quedar expuesto a la red local. El contenedor fija HOST=0.0.0.0
+   * (Dockerfile) porque el balanceador debe alcanzar la tarea; alli la frontera
+   * es el security group de la tarea, que solo admite al del balanceador.
+   */
+  host: flag('host') ?? (process.env.HOST?.trim() || '127.0.0.1'),
   clave: process.env.RIOT_API_KEY?.trim() || null,
 
   /** Plataforma de LAN (Latinoamerica Norte). LAS seria la2. */
@@ -777,7 +786,8 @@ async function manejarJugador(url, respuesta) {
       return json(respuesta, 404, { error: `No existe la cuenta ${nombre}#${tag} en Riot.` });
     }
 
-    console.error(`[proxy] jugador ${nombre}#${tag}: ${error.message}`);
+    // Minimizacion: el Riot ID no va al registro (CloudWatch solo guarda errores).
+    console.error(`[proxy] jugador ${region}: ${error.message}`);
     if (guardado) return json(respuesta, 200, guardado.valor, { 'X-Ranking-Cache': 'vencida' });
     return json(respuesta, error.estado === 429 ? 429 : 502, { error: error.message });
   }
@@ -1282,6 +1292,15 @@ function json(respuesta, estado, cuerpo, cabeceras = {}) {
 async function servirEstatico(rutaUrl, peticion, respuesta) {
   // Normalizamos y comprobamos que no se salga de la raiz del proyecto.
   const relativa = normalize(decodeURIComponent(rutaUrl)).replace(/^(\.\.[/\\])+/, '');
+
+  // Los dotfiles (.env, .env.example, .git, .dockerignore…) nunca se sirven:
+  // misma respuesta que un archivo inexistente. riot.txt no es dotfile y sigue
+  // publicandose (lo exige el portal de desarrolladores de Riot).
+  if (relativa.split(/[\\/]/).some((seg) => seg.startsWith('.'))) {
+    respuesta.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return respuesta.end('404 · No encontrado');
+  }
+
   let destino = join(RAIZ, relativa);
 
   if (!destino.startsWith(RAIZ + sep) && destino !== RAIZ) {
@@ -1397,16 +1416,19 @@ async function calentarCache() {
   }
 }
 
-servidor.listen(CONFIG.puerto, () => {
+servidor.listen(CONFIG.puerto, CONFIG.host, () => {
   const linea = '─'.repeat(58);
+  // Con 0.0.0.0 (contenedor) la URL util para una persona sigue siendo localhost.
+  const base = `http://${CONFIG.host === '0.0.0.0' ? 'localhost' : CONFIG.host}:${CONFIG.puerto}`;
   console.log(linea);
   console.log('  Ranking LAN · servidor de desarrollo');
   console.log(linea);
-  console.log(`  App          http://localhost:${CONFIG.puerto}/`);
-  console.log(`  Ranking      http://localhost:${CONFIG.puerto}/api/ranking?tier=CHALLENGER&cola=RANKED_SOLO_5x5`);
-  console.log(`  Jugador      http://localhost:${CONFIG.puerto}/api/jugador?riotId=Nombre%23TAG`);
-  console.log(`  Builds       http://localhost:${CONFIG.puerto}/api/campeon?id=103&region=la1`);
-  console.log(`  Estado       http://localhost:${CONFIG.puerto}/api/estado`);
+  console.log(`  Escuchando   ${CONFIG.host}:${CONFIG.puerto}`);
+  console.log(`  App          ${base}/`);
+  console.log(`  Ranking      ${base}/api/ranking?tier=CHALLENGER&cola=RANKED_SOLO_5x5`);
+  console.log(`  Jugador      ${base}/api/jugador?riotId=Nombre%23TAG`);
+  console.log(`  Builds       ${base}/api/campeon?id=103&region=la1`);
+  console.log(`  Estado       ${base}/api/estado`);
   console.log(linea);
   if (CONFIG.clave) {
     console.log(`  Clave de Riot detectada · plataforma ${CONFIG.plataforma} · top ${CONFIG.top}`);

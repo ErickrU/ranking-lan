@@ -28,6 +28,10 @@ node servidor/proxy.mjs
 El service worker exige un origen seguro, así que **`http://localhost` sí funciona pero
 `file://` no**. Abrir `index.html` con doble clic deja la app sin modo offline ni instalación.
 
+El servidor escucha solo en `localhost` (`127.0.0.1`): nadie más en tu red puede verlo. Si
+quieres probarla desde el móvil u otra máquina a propósito, arranca con `--host 0.0.0.0` (o
+`HOST=0.0.0.0`) y vuelve al valor por defecto cuando termines.
+
 ## Datos reales vs. modo demostración
 
 Al arrancar sin clave verás un aviso de **modo demostración**: los Riot ID son ficticios y
@@ -213,11 +217,12 @@ Respuesta (misma forma en vivo y en demo, para que la interfaz no tenga dos cami
 |---|---|---|
 | `RIOT_API_KEY` | — | Sin ella se sirven datos de demostración |
 | `PUERTO` | `8080` | Puerto del servidor |
+| `HOST` | `127.0.0.1` | Interfaz de escucha; el contenedor usa `0.0.0.0` (lo fija el `Dockerfile`) |
 | `PLATAFORMA` | `la1` | `la1` = LAN, `la2` = LAS, `na1`, `br1`, `kr`, `euw1`… |
 | `TOP_JUGADORES` | `25` | Jugadores por listado (cada uno = 1 petición a `account-v1`) |
 | `TTL_SEGUNDOS` | `600` | Cuánto reutiliza el proxy una respuesta |
 
-También como flags: `--puerto 8080`, `--top 30`.
+También como flags: `--puerto 8080`, `--host 0.0.0.0`, `--top 30`.
 
 ## Estructura
 

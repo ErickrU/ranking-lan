@@ -246,6 +246,10 @@ export function renderEstado(nodos, { listado, enLinea, cargando }) {
   const esDemo = listado.fuente === FUENTE.DEMO;
   nodos.aviso.hidden = !esDemo;
   if (esDemo && listado.aviso) nodos.avisoTexto.textContent = listado.aviso;
+
+  /* Aviso de servidor caido: hay red pero el proxy no respondio y los datos
+     salieron de una copia (SW o Cache Storage). Sin red lo explica el chip. */
+  nodos.avisoServidor.hidden = !(enLinea && !cargando && (listado.problemas?.length ?? 0) > 0);
 }
 
 /* ------------------------------------------------------------------ *

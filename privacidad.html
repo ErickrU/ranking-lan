@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Política de privacidad · Ranking LAN</title>
+  <meta name="description" content="Qué datos guarda Ranking LAN en tu dispositivo, qué recibe su servidor y qué terceros intervienen.">
+  <meta name="theme-color" content="#0a0f1c">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="./iconos/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./css/estilos.css">
+</head>
+<body>
+  <!-- Pagina publica y estatica: la enlazan el pie, la ayuda y el listado de la
+       Microsoft Store. Solo describe lo verificado en la infraestructura real. -->
+  <main class="contenido">
+    <article class="panel legal">
+      <p class="legal__volver"><a href="./">← Volver a Ranking LAN</a></p>
+
+      <h1>Política de privacidad de Ranking LAN</h1>
+      <p>Última actualización: <time datetime="2026-11-19">19 de noviembre de 2026</time></p>
+
+      <h2>Quién publica la app y cómo contactar</h2>
+      <p>
+        Ranking LAN es un proyecto académico de la UTEC (curso de Aplicaciones Web Progresivas)
+        publicado por Erick Alexander Rangel Urbina (ErickrU) bajo licencia MIT. Para cualquier
+        duda o solicitud sobre esta política escribe en
+        <a href="https://github.com/ErickrU/ranking-lan/issues" rel="noopener noreferrer" target="_blank">https://github.com/ErickrU/ranking-lan/issues</a>.
+      </p>
+
+      <h2>Sin cuentas ni registro</h2>
+      <p>
+        La app no tiene cuentas de usuario, no pide correo, contraseña ni ningún dato personal
+        para usarse, y no inicia sesión en Riot Games ni en ningún otro servicio en tu nombre.
+      </p>
+
+      <h2>Qué se guarda en tu dispositivo</h2>
+      <p>Todo lo que la app recuerda vive en el almacenamiento de tu navegador y nunca sale de él:</p>
+      <ul>
+        <li>
+          <strong>localStorage:</strong> tus preferencias de región, cola, liga y orden; la lista
+          de Riot ID de «Mi grupo»; la vista activa; el tema (oscuro o claro); el idioma; los
+          widgets instalados en el panel y tu preferencia de avisos.
+        </li>
+        <li>
+          <strong>Cache Storage</strong> (service worker): los archivos de la propia app para
+          funcionar sin conexión, las últimas respuestas recibidas del servidor, las imágenes y
+          catálogos de Data Dragon, y el estado de los widgets y de los avisos (última
+          instantánea y cambios pendientes).
+        </li>
+      </ul>
+      <p>
+        Puedes borrarlo todo en cualquier momento eliminando los datos del sitio desde la
+        configuración de tu navegador o desinstalando la app.
+      </p>
+
+      <h2>Qué recibe el servidor</h2>
+      <p>
+        Las consultas de ranking, jugadores, historial y builds van a
+        <code>https://d3b4s9lb316i67.cloudfront.net/api/*</code>, que pasa por Amazon CloudFront,
+        un balanceador de carga y un contenedor en Amazon ECS Fargate (región us-east-1 de Amazon
+        Web Services). Durante cada petición el servidor recibe tu dirección IP, las cabeceras
+        HTTP que envía tu navegador y los parámetros de la consulta: región, cola, liga, división,
+        el Riot ID o puuid del integrante de «Mi grupo» que consultas y el id del campeón.
+      </p>
+      <p>
+        Con esos parámetros el servidor consulta la API de Riot Games usando su propia clave (la
+        clave nunca viaja a tu dispositivo). Para no repetir llamadas conserva las respuestas en
+        memoria RAM durante 10 minutos (listados y jugadores), los nombres de jugadores hasta 24
+        horas y estadísticas agregadas de partidas por región para las builds. No hay base de
+        datos ni escritura en disco: un reinicio del servidor lo borra todo.
+      </p>
+
+      <h2>Registros</h2>
+      <ul>
+        <li><strong>Amazon CloudFront:</strong> el registro de accesos está desactivado.</li>
+        <li><strong>Balanceador de carga:</strong> los access logs están desactivados.</li>
+        <li>
+          <strong>Amazon CloudWatch Logs</strong> (grupo <code>/ecs/ranking-lan</code>, retención
+          de 7 días): solo recibe los mensajes de arranque del servidor y sus errores. No registra
+          peticiones, direcciones IP ni Riot ID.
+        </li>
+      </ul>
+
+      <h2>Terceros</h2>
+      <ul>
+        <li>
+          <strong>API de Riot Games:</strong> la consulta el servidor, no tu navegador, para
+          obtener la clasificación oficial.
+        </li>
+        <li>
+          <strong>Data Dragon</strong> (<code>ddragon.leagueoflegends.com</code>): las imágenes y
+          catálogos de campeones los descarga directamente tu navegador, por lo que Riot Games
+          recibe tu dirección IP como en cualquier red de distribución de contenidos.
+        </li>
+        <li><strong>Amazon Web Services:</strong> infraestructura donde se ejecuta el servidor.</li>
+      </ul>
+      <p>La app no usa analítica, publicidad, cookies ni rastreadores.</p>
+
+      <h2>Avisos y distintivos</h2>
+      <p>
+        El permiso de notificaciones solo se solicita si pulsas «Activar avisos». Los avisos se
+        generan en tu dispositivo comparando los datos recién recibidos con la última instantánea
+        guardada; no existe un servidor de notificaciones push. La sincronización en segundo
+        plano, si tu navegador la permite, consulta el mismo servidor con la misma información
+        descrita arriba.
+      </p>
+
+      <h2>Compartir grupo</h2>
+      <p>
+        El enlace que genera «Compartir grupo» contiene los Riot ID de tu lista. Compártelo solo
+        con quien quieras que los vea.
+      </p>
+
+      <h2>Menores</h2>
+      <p>
+        La app muestra únicamente datos públicos del ladder de Riot Games y no crea perfiles de
+        usuario ni recoge datos de quien la usa.
+      </p>
+
+      <h2>Cambios en esta política</h2>
+      <p>Cualquier cambio se publicará en esta misma página con una nueva fecha de actualización.</p>
+
+      <h2>Aviso legal de Riot Games</h2>
+      <p class="pie__legal" lang="en">Ranking LAN isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.</p>
+      <p class="pie__legal">Ranking LAN no está respaldado por Riot Games y no refleja las opiniones ni los puntos de vista de Riot Games ni de nadie relacionado oficialmente con la producción o gestión de las propiedades de Riot Games. Riot Games y todas las propiedades asociadas son marcas comerciales o marcas registradas de Riot Games, Inc.</p>
+
+      <p class="legal__volver"><a href="./">← Volver a Ranking LAN</a></p>
+    </article>
+  </main>
+</body>
+</html>

@@ -17,3 +17,6 @@ herramientas/
 despliegue/
 Dockerfile
 .dockerignore
+
+# Material de la Microsoft Store (listado, capturas 1920x1080): no se sirve
+tienda/

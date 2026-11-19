@@ -59,6 +59,7 @@ const nodos = {
     tiempo: $('#texto-actualizado'),
     aviso: $('#aviso-demo'),
     avisoTexto: $('#aviso-demo-texto'),
+    avisoServidor: $('#aviso-servidor'),
   },
 
   botonActualizar: $('#btn-actualizar'),

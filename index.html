@@ -133,6 +133,13 @@
       <span id="aviso-demo-texto"></span>
     </div>
 
+    <!-- Aviso: hay red pero el servidor no responde (datos desde la cache del SW).
+         Lo controla renderEstado a partir de listado.problemas. -->
+    <div id="aviso-servidor" class="aviso" hidden>
+      <strong data-i18n="aviso.servidor">Sin conexi&oacute;n con el servidor.</strong>
+      <span data-i18n="aviso.servidorTexto"></span>
+    </div>
+
     <!-- ============================ CONTROLES ============================ -->
     <section class="panel controles" aria-label="Filtros del ranking">
       <div class="control control--ancho">
@@ -426,6 +433,12 @@
       <li><strong data-i18n="ayuda.i6.t">Avisos:</strong> <span data-i18n="ayuda.i6.d"></span></li>
     </ul>
     <p class="ayuda__nota" data-i18n="ayuda.nota"></p>
+    <section class="ayuda__acerca">
+      <h4 data-i18n="ayuda.acerca">Acerca de</h4>
+      <p><a href="./privacidad.html" data-i18n="pie.privacidad">Pol&iacute;tica de privacidad</a> · <a href="https://github.com/ErickrU/ranking-lan/issues" rel="noopener noreferrer" target="_blank" data-i18n="pie.soporte">Soporte</a></p>
+      <p class="pie__legal" lang="en">Ranking LAN isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.</p>
+      <p class="pie__legal pie__legal--traduccion" data-i18n="pie.legalTraduccion"></p>
+    </section>
   </dialog>
 
   <!-- ============================ AVISO DE ACTUALIZACION ============================ -->
@@ -436,7 +449,11 @@
 
   <!-- ============================ PIE ============================ -->
   <footer class="pie">
-    <p class="pie__legal" data-i18n="pie.legal"></p>
+    <!-- Aviso legal de Riot Games: el texto oficial en ingles va fijo (no pasa por
+         i18n) y la traduccion al espanol se vacia en ingles (.pie__legal:empty). -->
+    <p class="pie__legal" lang="en" id="aviso-riot">Ranking LAN isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.</p>
+    <p class="pie__legal pie__legal--traduccion" data-i18n="pie.legalTraduccion"></p>
+    <p class="pie__enlaces"><a href="./privacidad.html" data-i18n="pie.privacidad">Pol&iacute;tica de privacidad</a> · <a href="https://github.com/ErickrU/ranking-lan/issues" rel="noopener noreferrer" target="_blank" data-i18n="pie.soporte">Soporte</a></p>
     <p class="pie__meta">
       <span data-i18n="pie.meta1">Proyecto acad&eacute;mico UTEC · Aplicaciones Web Progresivas · datos v&iacute;a</span>
       <a href="https://developer.riotgames.com/" rel="noopener noreferrer" target="_blank">Riot Games API</a>

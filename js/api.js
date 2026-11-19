@@ -174,7 +174,12 @@ async function desdeProxy({ region, cola, tier, division }) {
   let fuente = documento.fuente === FUENTE.DEMO ? FUENTE.DEMO : FUENTE.VIVO;
   if (servidaDeCache && fuente !== FUENTE.DEMO) fuente = FUENTE.CACHE;
 
-  return normalizarListado(documento, { region, cola, tier, division, fuente });
+  // Si la copia vino del SW es que el servidor no respondio aunque haya red:
+  // `problemas` lo cuenta para que la UI pueda explicarlo (#aviso-servidor).
+  return {
+    ...normalizarListado(documento, { region, cola, tier, division, fuente }),
+    problemas: servidaDeCache ? ['servidor no disponible: copia del service worker'] : [],
+  };
 }
 
 /** Paso 2: la ultima respuesta buena guardada en Cache Storage. */
