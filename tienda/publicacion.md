@@ -8,8 +8,8 @@ producción, así que cada despliegue web actualiza la app de la Store sin volve
 
 - Cuenta de desarrollador en [Partner Center](https://partner.microsoft.com/dashboard) (pago
   único; la verificación de identidad puede tardar días).
-- La app desplegada en https://d3b4s9lb316i67.cloudfront.net/ con el service worker **v9**
-  (`const VERSION = 'v9'` en `sw.js`) y https://d3b4s9lb316i67.cloudfront.net/privacidad.html
+- La app desplegada en https://d3b4s9lb316i67.cloudfront.net/ con el service worker **v10**
+  (`const VERSION = 'v10'` en `sw.js`) y https://d3b4s9lb316i67.cloudfront.net/privacidad.html
   respondiendo 200. Comprobar:
 
   ```bash
@@ -72,9 +72,14 @@ Abrir la app desde el menú Inicio y repasar:
   sincronización en segundo plano quedó registrada (requiere la app instalada y uso reciente).
 - **Probar aviso**: aparece una notificación en el Centro de actividades con el título «Aviso de
   prueba · Ranking LAN» y los botones **Ver mi grupo** y **Ver ranking**. Cada botón abre o
-  enfoca la app en la pestaña correspondiente (Mi grupo / Ranking regional).
+  enfoca la app en la pestaña correspondiente (Mi grupo / Ranking regional). Con la interfaz en
+  inglés (selector **ES/EN**) la notificación sale en inglés («Test notification · Ranking LAN»,
+  **View my group** / **View ranking**).
 - Con la app abierta, cambiar de región y pulsar **Comprobar ahora**: la primera vez solo guarda
   la instantánea; no debe aparecer ningún aviso falso.
+- Con la ventana de la app enfocada, un cambio detectado **no** muestra notificación ni pone
+  distintivo: aparece solo en la lista **Últimos cambios** (y se anuncia a lectores de pantalla).
+  Con la app minimizada o cerrada sí notifica y pone el distintivo.
 - Para forzar la sincronización periódica sin esperar 12 h: DevTools → **Application → Service
   workers** → campo **Periodic Sync** → escribir `avisos` y pulsar el botón. En la consola del SW
   se ve la petición a `/api/ranking` y `/api/jugador`. Con la app cerrada, Edge la ejecuta según
@@ -113,12 +118,19 @@ ver README → Desplegar) y repetir: el paquete no cambia porque solo contiene l
 4. **Listados de la Store → Español (y opcionalmente inglés)**: pegar nombre, descripción corta y
    completa, características, términos de búsqueda, novedades, copyright y URLs de
    `listado-microsoft-store.md`. Subir las capturas `capturas/*.png` (escritorio, 1920 × 1080)
-   con sus leyendas.
+   con sus leyendas. En la misma página, los logos opcionales de `logos/`:
+   - **Store logos** → *9:16 Poster art (720 × 1080)*: `logos/poster-720x1080.png` (muy
+     recomendado: es el logo principal en Windows 10/11 y obligatorio en Xbox) y *1:1 Box art
+     (1080 × 1080)*: `logos/box-art-1080x1080.png`.
+   - **Store display images** → *1:1 App tile icon (300 × 300)*: `logos/tile-300x300.png`,
+     *1:1 (150 × 150)*: `logos/tile-150x150.png` y *1:1 (71 × 71)*: `logos/tile-71x71.png`.
+   Si no se suben, la Store usa los iconos del paquete. No hace falta *Super hero art* ni
+   imágenes de Xbox: la app no se publica para Xbox ni lleva tráiler.
 5. **Capacidades**: al detectar `runFullTrust` Partner Center pedirá justificación; pegar el
    texto de `listado-microsoft-store.md`.
-6. **Notas para la certificación**: indicar que la app funciona sin cuenta, que los datos son de
-   demostración mientras Riot no apruebe la clave de producción (chip «Datos demo» visible) y
-   cómo probar avisos y widget (apartado 4).
+6. **Notas para la certificación**: indicar que la app funciona sin cuenta y cómo probar avisos y
+   widget (apartado 4). Si en ese momento el servidor estuviera sin clave de Riot (chip «Datos
+   demo» visible), indicar que los datos son de demostración.
 7. **Enviar a la Store**. La certificación suele tardar de uno a tres días hábiles.
 
 ## 6. Después de la certificación
@@ -130,7 +142,7 @@ ver README → Desplegar) y repetir: el paquete no cambia porque solo contiene l
    "iarc_rating_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
    ```
 
-2. Subir `VERSION` en `sw.js` (`v9` → `v10`): el manifest está precacheado y sin nueva versión los
+2. Subir `VERSION` en `sw.js` (`v10` → `v11`): el manifest está precacheado y sin nueva versión los
    clientes no lo refrescarían.
 3. Redesplegar: `bash despliegue/desplegar.sh` (ver README → Desplegar).
 
@@ -149,8 +161,10 @@ ver README → Desplegar) y repetir: el paquete no cambia porque solo contiene l
 3. Revisar `TOP_JUGADORES` y `TTL_SEGUNDOS` (README → Variables de entorno) según la cuota de la
    clave de producción.
 4. Si cambia el alcance (más jugadores, más regiones), actualizar la descripción del listado y
-   las capturas (`node herramientas/capturas-tienda.mjs` con el proxy apuntando a datos reales) y
-   enviar una actualización solo del listado: no hace falta nuevo paquete.
+   las capturas (`node herramientas/capturas-tienda.mjs`, que captura contra producción y aborta
+   si la app sirve datos de demostración) y enviar una actualización solo del listado: no hace
+   falta nuevo paquete. Los logos (`node herramientas/logos-tienda.mjs`) solo cambian si cambia
+   el icono.
 
 ## 8. Reversión
 

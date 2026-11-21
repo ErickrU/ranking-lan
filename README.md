@@ -232,7 +232,7 @@ ranking-lan/
 ├── privacidad.html            Política de privacidad (enlazada desde el pie, la ayuda y la Store)
 ├── offline.html               Respaldo de navegación sin red ni caché
 ├── manifest.webmanifest       Identidad instalable: iconos, atajos, capturas
-├── sw.js                      Service worker v9 (precache + estrategias + widgets + avisos)
+├── sw.js                      Service worker v10 (precache + estrategias + widgets + avisos)
 ├── css/estilos.css
 ├── js/
 │   ├── app.js                 Estado, eventos, pestañas, orquestación
@@ -248,7 +248,7 @@ ranking-lan/
 ├── datos/ranking-lan.json     Semilla de demostración (ficticia)
 ├── iconos/                    SVG fuente, PNG generados y capturas
 ├── servidor/proxy.mjs         Estáticos + proxy de la API de Riot
-├── tienda/                    Material para la Microsoft Store: listado, guía de publicación y capturas 1920×1080
+├── tienda/                    Material para la Microsoft Store: listado, guía de publicación, capturas 1920×1080 y logos
 ├── Dockerfile                 Imagen de producción (node:22-alpine, sin deps)
 ├── despliegue/
 │   ├── plantilla.yaml         CloudFormation: Fargate + ALB (+ CloudFront)
@@ -256,7 +256,8 @@ ranking-lan/
 │   └── eliminar.sh            Borra toda la infraestructura
 └── herramientas/
     ├── cdp.mjs                Cliente CDP mínimo y arranque de Chrome headless (compartido)
-    ├── capturas-tienda.mjs    Capturas 1920×1080 para la Store → tienda/capturas/
+    ├── capturas-tienda.mjs    Capturas 1920×1080 para la Store (contra producción) → tienda/capturas/
+    ├── logos-tienda.mjs       Logos de la Store (poster, box art y tiles) → tienda/logos/
     ├── generar-iconos.sh      SVG → PNG con Chrome headless
     ├── generar-datos-demo.mjs Regenera la semilla de demostración
     └── verificar.mjs          Pruebas end-to-end vía Chrome DevTools Protocol
@@ -330,7 +331,7 @@ Cuando el service worker responde desde su caché por falta de red, añade la ca
 *Datos en vivo*: la interfaz nunca presenta datos viejos como frescos.
 
 Al desplegar un cambio en el manifest o en archivos precacheados, **sube `VERSION` en `sw.js`**
-(hoy `v9`) para que se borren los cachés anteriores.
+(hoy `v10`) para que se borren los cachés anteriores.
 
 ## Avisos y distintivos
 
@@ -362,20 +363,26 @@ El permiso de notificaciones se pide solo al pulsar **Activar avisos** (nunca al
 distintivo del icono (`setAppBadge`) es el número de cambios no vistos; se limpia al recuperar el
 foco, al volver a la pestaña visible o al abrir la sección. Las notificaciones llevan dos
 acciones, **Ver mi grupo** y **Ver ranking**, y `notificationclick` enfoca la ventana abierta
-(o abre una) en la pestaña correspondiente.
+(o abre una) en la pestaña correspondiente. Salen en el idioma de la app (`config.idioma`,
+ES/EN, con un diccionario propio del SW que sigue el esquema de `js/i18n.js`). Si una ventana de
+la app está visible y con el foco, el SW no notifica ni pone distintivo: los cambios van solo a la
+lista **Últimos cambios** y la página los anuncia en su región viva.
 
 **Contrato página ⇄ service worker**
 
 | Dirección | Mensaje | Contenido |
 |---|---|---|
-| Página → SW | `AVISOS_DATOS` | `{config?, ranking?, grupo?}`: preferencias y selección, top 3 del listado, miembros del grupo con rango |
+| Página → SW | `AVISOS_DATOS` | `{config?, ranking?, grupo?}`: intención del usuario (preferencia, idioma, selección seguida y grupo guardado entero), top 3 del listado, miembros del grupo con rango fresco |
 | Página → SW | `AVISOS_PROBAR` · `AVISOS_VISTOS` · `AVISOS_SINCRONIZAR` · `AVISOS_ABRIR {accion}` | Probar aviso, marcar vistos, comprobar ahora, simular el clic en una acción |
-| SW → página | `AVISOS_PENDIENTES` | `{n, cambios[], badge, origen}` tras cada procesado |
+| SW → página | `AVISOS_PENDIENTES` | `{n, cambios[], badge, origen, nuevos, silencioso}` tras cada procesado |
 | SW → página | `AVISOS_PROBADO` · `AVISOS_IR {vista}` | Resultado de la prueba; navegar a una pestaña |
 
 El estado del SW vive en Cache Storage, caché `ranking-lan-avisos-v1` (`./avisos/config.json`,
-`./avisos/instantanea.json`, `./avisos/pendientes.json`); solo el SW la escribe. La preferencia
-del usuario se guarda además en `localStorage` (`ranking-lan:avisos`).
+`./avisos/instantanea.json`, `./avisos/pendientes.json`); solo el SW la escribe. La `config` que
+llega se **fusiona** con la guardada (un mensaje parcial nunca borra lo que no trae) y todos los
+procesados pasan por una cola (`enCola()`), de uno en uno, para que dos mensajes casi simultáneos
+no se pisen la instantánea ni los pendientes. La preferencia del usuario se guarda además en
+`localStorage` (`ranking-lan:avisos`).
 
 **Probarlo en local**
 
@@ -384,9 +391,13 @@ del usuario se guarda además en `localStorage` (`ranking-lan:avisos`).
 3. Para forzar la sincronización: DevTools → *Application* → *Service workers* → *Periodic Sync*
    con el tag `avisos` (o **Comprobar ahora**).
 4. El verificador lo cubre de forma automática: concede el permiso por CDP, comprueba la
-   notificación de prueba y sus acciones, inyecta dos `AVISOS_DATOS` sintéticos (un miembro que
-   sube de liga y un top 3 que cambia), verifica las notificaciones `grupo` y `ranking`, el
-   contador, la limpieza al recuperar el foco y que `AVISOS_SINCRONIZAR` escribe la instantánea.
+   notificación de prueba y sus acciones, que la config publicada al SW está completa y que una
+   parcial se fusiona con la guardada, inyecta `AVISOS_DATOS` sintéticos (un miembro que sube de
+   liga y un top 3 que cambia), verifica las notificaciones `grupo` y `ranking`, el contador, que
+   dos procesados concurrentes no duplican ni pierden cambios, que con la ventana enfocada
+   (`Emulation.setFocusEmulationEnabled`) no hay notificación ni distintivo pero la lista crece,
+   la limpieza al recuperar el foco, que `AVISOS_SINCRONIZAR` escribe la instantánea y que la
+   notificación de prueba sale en inglés con la interfaz en inglés.
 
 ## Microsoft Store
 
@@ -400,8 +411,11 @@ app de la Store. Todo el material está en `tienda/`:
 - `tienda/publicacion.md`: pasos de Partner Center y PWABuilder, pruebas en Windows 11 (barra de
   título, notificaciones, distintivo, widgets, sin conexión), envío a certificación,
   `iarc_rating_id`, clave de producción de Riot y reversión.
-- `tienda/capturas/*.png`: capturas de escritorio 1920×1080, generadas con
-  `node herramientas/capturas-tienda.mjs --url http://localhost:8137/` (con el proxy en marcha).
+- `tienda/capturas/*.png`: capturas de escritorio 1920×1080 con datos reales, generadas con
+  `node herramientas/capturas-tienda.mjs` contra producción (el script aborta si la app sirve datos
+  de demostración; `--url http://localhost:8137/ --permitir-demo` para probarlo con el proxy local).
+- `tienda/logos/*.png`: logos opcionales de la Store (poster 720×1080, box art 1080×1080 y tiles
+  300/150/71) generados con `node herramientas/logos-tienda.mjs` a partir de `iconos/icono.svg`.
 
 ## Probarla
 

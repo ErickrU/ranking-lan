@@ -149,6 +149,21 @@ Respuestas **sugeridas** (confirmarlas al rellenar el cuestionario; el resultado
 Resultado esperado: apta para todos los públicos (IARC 3+ / PEGI 3 / ESRB Everyone). Tras la
 certificación, copiar el `iarc_rating_id` al manifest (ver `publicacion.md`).
 
+## Logos de la Store (opcionales)
+
+Generados con `node herramientas/logos-tienda.mjs` a partir de `iconos/icono.svg` (la fuente
+vectorial de `iconos/icono-512.png`) y los colores de marca de `css/estilos.css`. Sin logos ni
+marcas de Riot. Se suben en Partner Center → **Store listings** → sección **Store logos** (poster y
+box art) y **Store display images** (tiles); ver `publicacion.md` §5.
+
+| Archivo | Campo de Partner Center | Tamaño | Contenido |
+|---|---|---|---|
+| `logos/poster-720x1080.png` | Store logos → 9:16 Poster art | 720 × 1080 | Icono centrado + nombre «Ranking LAN» |
+| `logos/box-art-1080x1080.png` | Store logos → 1:1 Box art | 1080 × 1080 | Icono + nombre «Ranking LAN» |
+| `logos/tile-300x300.png` | Store display images → 1:1 App tile icon | 300 × 300 | Solo el icono sobre el fondo de marca |
+| `logos/tile-150x150.png` | Store display images → 1:1 | 150 × 150 | Solo el icono sobre el fondo de marca |
+| `logos/tile-71x71.png` | Store display images → 1:1 | 71 × 71 | Solo el icono sobre el fondo de marca |
+
 ## Capturas (escritorio, 1920 × 1080)
 
 Generadas con `node herramientas/capturas-tienda.mjs` contra **producción**
