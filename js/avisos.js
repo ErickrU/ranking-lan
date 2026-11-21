@@ -126,20 +126,26 @@ function componerConfig() {
 const enviarConfig = () => enviar({ tipo: 'AVISOS_DATOS', config: componerConfig() });
 
 /**
- * app.js termina cargar() con exito. Se ignoran las copias de cache (no son
- * datos nuevos) y los top 3 con nombres pendientes (clave null).
+ * app.js termina cargar(). La seleccion seguida cambia siempre, asi que la
+ * config viaja siempre; el top 3 solo si es comparable: se omite el de las
+ * copias de cache (no son datos nuevos), el de un listado vacio y el que tiene
+ * nombres pendientes (clave null).
  */
 export function publicarRanking(listado) {
   if (!listado || typeof listado !== 'object') return;
   const { region, cola, tier, division } = listado;
   estado.ultimaSeleccion = { region, cola, tier, division };
-  if (listado.fuente === 'cache') return;
 
-  const top3 = [...(listado.jugadores ?? [])]
-    .sort((a, b) => a.puesto - b.puesto)
-    .slice(0, 3)
-    .map((j) => ({ clave: j.puuid ?? j.riotId ?? null, riotId: j.riotId ?? null, lp: j.lp }));
-  if (top3.length === 0 || top3.some((j) => j.clave == null || j.riotId == null)) return;
+  const top3 = listado.fuente === 'cache'
+    ? []
+    : [...(listado.jugadores ?? [])]
+      .sort((a, b) => a.puesto - b.puesto)
+      .slice(0, 3)
+      .map((j) => ({ clave: j.puuid ?? j.riotId ?? null, riotId: j.riotId ?? null, lp: j.lp }));
+  if (top3.length === 0 || top3.some((j) => j.clave == null || j.riotId == null)) {
+    enviarConfig();
+    return;
+  }
 
   enviar({
     tipo: 'AVISOS_DATOS',

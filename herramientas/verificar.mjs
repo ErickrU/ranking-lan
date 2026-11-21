@@ -29,17 +29,25 @@
  *     lo mata y comprueba que con red la app explica que el servidor no
  *     responde (#aviso-servidor), sirve los datos desde cache y sobrevive a
  *     una recarga sin excepciones
+ *   - instalacion del service worker (prueba real): un servidor auxiliar en
+ *     loopback reenvia al proxy principal pero responde 404 a un recurso
+ *     opcional del precache (siempre) y a uno critico (solo la primera vez):
+ *     la primera instalacion falla entera (addAll atomico), la pagina vuelve a
+ *     registrar el SW y queda activo con el shell critico completo
+ *   - la config que la pagina publica al SW se reenvia al cambiar la cola de
+ *     «Mi grupo» y cuando la seleccion cambia con un listado servido desde cache
  *
  * Ademas captura las dos imagenes que declara manifest.webmanifest
  * (screenshots), usadas por Android para enriquecer el dialogo de instalacion,
  * y la captura del widget (widgets/top3-lan-captura.png) que declara el
  * miembro `widgets` del manifest.
  *
- * Uso:  node herramientas/verificar.mjs [--url http://localhost:8137/] [--cdp 9333] [--caida 8139]
+ * Uso:  node herramientas/verificar.mjs [--url http://localhost:8137/] [--cdp 9333] [--caida 8139] [--sabotaje 8141]
  */
 
 import { spawn } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Cdp, espera, lanzarChrome, paginaInicial } from './cdp.mjs';
@@ -54,6 +62,8 @@ const URL_APP = flag('url', 'http://localhost:8137/');
 const PUERTO_CDP = Number(flag('cdp', 9333));
 /** Puerto del proxy auxiliar que se arranca y se mata en la seccion «Servidor caído». */
 const PUERTO_CAIDA = Number(flag('caida', 8139));
+/** Puerto (loopback) del servidor auxiliar de la seccion «Instalación del service worker». */
+const PUERTO_SABOTAJE = Number(flag('sabotaje', 8141));
 
 /* ================================================================
    Informe
@@ -71,6 +81,7 @@ const { chrome, perfil } = lanzarChrome(PUERTO_CDP);
 
 let cdp;
 let proxyCaida; // proxy auxiliar de la seccion «Servidor caído»; se mata en el finally
+let servidorSabotaje; // servidor auxiliar de «Instalación del service worker»; se cierra en el finally
 let codigoSalida = 0;
 
 try {
@@ -657,6 +668,59 @@ try {
       e.miembros.length > 0 && JSON.stringify(c.grupo?.miembros) === JSON.stringify(e.miembros) && c.grupo?.cola === e.colaGrupo,
       `grupo ${c.grupo?.miembros?.length ?? 0}/${e.miembros.length} integrantes · ${c.region}/${c.cola}/${c.tier}/${c.division} · idioma ${c.idioma}`);
   }
+
+  // Dos cambios de intencion que antes no llegaban al SW: la cola de «Mi grupo»
+  // (el <select> persiste y repinta; ahora ademas publica) y la seleccion
+  // seguida cuando el listado se sirve desde cache (publicarRanking salia antes
+  // de enviar nada).
+  const reenvioCola = await cdp.evaluar(`(async () => {
+    const sel = document.getElementById('grupo-cola');
+    const cambiar = async (cola) => {
+      sel.value = cola;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      const config = await window.__esperarConfigAvisos((c) => c?.grupo?.cola === cola);
+      let guardada = null;
+      try { guardada = JSON.parse(localStorage.getItem('ranking-lan:grupo')).cola; } catch {}
+      return { cola: config?.grupo?.cola ?? null, miembros: config?.grupo?.miembros?.length ?? 0,
+               tier: config?.tier ?? null, guardada };
+    };
+    const flex = await cambiar('RANKED_FLEX_SR');
+    const solo = await cambiar('RANKED_SOLO_5x5');
+    return { flex, solo };
+  })()`);
+  comprobar('Cambiar la cola de «Mi grupo» reenvía la config completa al SW (y al volver)',
+    reenvioCola.flex.cola === 'RANKED_FLEX_SR' && reenvioCola.flex.guardada === 'RANKED_FLEX_SR' &&
+    reenvioCola.flex.miembros > 0 && reenvioCola.flex.tier === 'CHALLENGER' &&
+    reenvioCola.solo.cola === 'RANKED_SOLO_5x5' && reenvioCola.solo.miembros > 0,
+    `grupo.cola ${reenvioCola.flex.cola} → ${reenvioCola.solo.cola} · ${reenvioCola.solo.miembros} integrantes · selección ${reenvioCola.flex.tier} conservada`);
+
+  // Mismo modulo que usa app.js (los modulos ES son unicos por documento):
+  // un listado con fuente 'cache' no tiene top 3 comparable, pero la seleccion
+  // seguida cambio y debe viajar en la config. Se usa MASTER, una liga que esta
+  // sesion no cargo nunca, para comprobar que NO se compara ni se anota.
+  const reenvioCache = await cdp.evaluar(`(async () => {
+    const avisos = await import('./js/avisos.js');
+    const listado = (tier, jugadores) => ({ fuente: 'cache', region: 'la1', cola: 'RANKED_SOLO_5x5', tier, division: 'I', jugadores });
+    const antes = await window.__leerConfigAvisos();
+    avisos.publicarRanking(listado('MASTER', [{ puesto: 1, puuid: 'p-cache', riotId: 'Cache#LAN', lp: 999 }]));
+    const config = await window.__esperarConfigAvisos((c) => c?.tier === 'MASTER');
+    const cache = await caches.open('ranking-lan-avisos-v1');
+    const guardada = await cache.match(new URL('./avisos/instantanea.json', location.href).href);
+    const instantanea = guardada ? await guardada.json() : {};
+    avisos.publicarRanking(listado('CHALLENGER', []));
+    const restaurada = await window.__esperarConfigAvisos((c) => c?.tier === 'CHALLENGER');
+    return {
+      antes: antes?.tier ?? null, tier: config?.tier ?? null, region: config?.region ?? null,
+      activados: config?.activados ?? null, miembros: config?.grupo?.miembros?.length ?? 0,
+      anotado: 'la1|RANKED_SOLO_5x5|MASTER|I' in (instantanea.ranking ?? {}),
+      restaurada: restaurada?.tier ?? null,
+    };
+  })()`);
+  comprobar('Una selección servida desde caché reenvía la config completa al SW sin comparar ese top 3',
+    reenvioCache.antes === 'CHALLENGER' && reenvioCache.tier === 'MASTER' && reenvioCache.region === 'la1' &&
+    reenvioCache.activados === true && reenvioCache.miembros > 0 && reenvioCache.anotado === false &&
+    reenvioCache.restaurada === 'CHALLENGER',
+    `tier ${reenvioCache.antes} → ${reenvioCache.tier} → ${reenvioCache.restaurada} · ${reenvioCache.miembros} integrantes conservados · top 3 de caché anotado: ${reenvioCache.anotado}`);
 
   const prueba = await cdp.evaluar(`(async () => {
     const desde = window.__mensajesAvisos.length;
@@ -1656,6 +1720,105 @@ try {
   comprobar('Sin excepciones durante la caída del servidor',
     excepcionesDespues === excepcionesAntes, `${excepcionesDespues - excepcionesAntes} nuevas`);
 
+  /* --- Instalación del service worker ------------------------------------ */
+  console.log('\nInstalación del service worker');
+
+  // Prueba REAL contra un origen propio (otro puerto = registro y caches
+  // nuevos): un servidor auxiliar en loopback reenvia todo al proxy principal
+  // salvo dos sabotajes a proposito:
+  //   - un recurso OPCIONAL del precache responde siempre 404: el SW debe
+  //     instalarse y activarse igual, con el shell critico entero;
+  //   - un recurso CRITICO responde 404 solo a la PRIMERA peticion de precache
+  //     (las del SW van con cache: 'reload', es decir Cache-Control: no-cache y
+  //     Sec-Fetch-Dest: empty; la hoja de estilos de la pagina no): la primera
+  //     instalacion debe fallar entera (addAll atomico) y la pagina volver a
+  //     registrar el SW hasta dejarlo activo, igual que en la primera visita a
+  //     produccion cuando el navegador detiene el worker a mitad del install.
+  const RUTA_OPCIONAL = '/widgets/top3-lan-captura.png';
+  const RUTA_CRITICA = '/css/estilos.css';
+  const sabotaje = { criticaPeticiones: 0, criticaFalladas: 0, descargasSw: 0 };
+  const principal = new URL(URL_APP);
+  if (principal.hostname === 'localhost') principal.hostname = '127.0.0.1'; // el proxy escucha solo en IPv4
+  const desdeSw = (req) =>
+    /no-cache/i.test(req.headers['cache-control'] ?? '') || req.headers['sec-fetch-dest'] === 'empty';
+  const negar = (res, texto) => {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(texto);
+  };
+  servidorSabotaje = createServer(async (req, res) => {
+    const ruta = (req.url ?? '/').split('?')[0];
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Solo GET');
+    }
+    if (ruta === '/sw.js') sabotaje.descargasSw++;
+    if (ruta === RUTA_OPCIONAL) return negar(res, '404 · ausente a propósito (recurso opcional)');
+    if (ruta === RUTA_CRITICA && desdeSw(req)) {
+      sabotaje.criticaPeticiones++;
+      if (sabotaje.criticaFalladas === 0) {
+        sabotaje.criticaFalladas++;
+        return negar(res, '404 · ausente a propósito (solo la primera vez)');
+      }
+    }
+    try {
+      const origen = await fetch(new URL(req.url, principal), { headers: { accept: req.headers.accept ?? '*/*' } });
+      const cuerpo = Buffer.from(await origen.arrayBuffer());
+      const cabeceras = { 'Content-Length': cuerpo.length };
+      for (const nombre of ['content-type', 'cache-control', 'last-modified']) {
+        const valor = origen.headers.get(nombre);
+        if (valor) cabeceras[nombre] = valor;
+      }
+      res.writeHead(origen.status, cabeceras);
+      res.end(cuerpo);
+    } catch {
+      res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('proxy principal no disponible');
+    }
+  });
+  await new Promise((listo) => servidorSabotaje.listen(PUERTO_SABOTAJE, '127.0.0.1', listo));
+  const opcional404 = (await fetch(`http://127.0.0.1:${PUERTO_SABOTAJE}${RUTA_OPCIONAL}`)).status;
+  const reenviado = (await fetch(`http://127.0.0.1:${PUERTO_SABOTAJE}/api/estado`)).status;
+  comprobar('El servidor auxiliar arranca en loopback, reenvía al proxy y niega el recurso opcional',
+    opcional404 === 404 && reenviado === 200, `puerto ${PUERTO_SABOTAJE} · ${RUTA_OPCIONAL} → ${opcional404} · /api/estado → ${reenviado}`);
+
+  await cdp.enviar('Page.navigate', { url: `http://localhost:${PUERTO_SABOTAJE}/` });
+  let instalacion = { controla: false, estado: null, texto: '' };
+  for (let intento = 0; intento < 100; intento++) { // hasta 25 s
+    await espera(250);
+    try {
+      instalacion = await cdp.evaluar(`(async () => {
+        const reg = await navigator.serviceWorker.getRegistration();
+        return {
+          controla: !!navigator.serviceWorker.controller,
+          estado: reg?.active?.state ?? null,
+          texto: document.getElementById('estado-sw')?.textContent ?? '',
+          filas: document.querySelectorAll('#cuerpo-tabla tr:not(.esqueleto)').length,
+        };
+      })()`);
+      if (instalacion.controla && instalacion.estado === 'activated' && instalacion.filas > 0) break;
+    } catch { /* navegando */ }
+  }
+  const shellSabotaje = await cdp.evaluar(`(async () => {
+    const nombres = await caches.keys();
+    const shell = await caches.open(nombres.find((n) => n.includes('shell')) || 'x');
+    return { nombres, rutas: (await shell.keys()).map((k) => new URL(k.url).pathname) };
+  })()`);
+  const criticas = ['/', '/index.html', '/offline.html', '/manifest.webmanifest', '/css/estilos.css', '/js/app.js',
+    '/js/api.js', '/js/ui.js', '/js/registro-sw.js', '/js/amigos.js', '/js/i18n.js', '/js/campeones.js',
+    '/js/widgets.js', '/js/avisos.js'];
+  const faltanCriticas = criticas.filter((r) => !shellSabotaje.rutas.includes(r));
+  comprobar('Un recurso crítico ausente hace fallar la primera instalación entera y la página reintenta el registro',
+    sabotaje.criticaFalladas === 1 && sabotaje.criticaPeticiones >= 2 && sabotaje.descargasSw >= 2 && instalacion.controla,
+    `${RUTA_CRITICA} pedido ${sabotaje.criticaPeticiones} veces por el SW (404 la 1.ª) · sw.js descargado ${sabotaje.descargasSw} veces · controlado ${instalacion.controla}`);
+  comprobar('El SW queda instalado y activo aunque un recurso no crítico del precache responda 404',
+    instalacion.controla && instalacion.estado === 'activated' && instalacion.filas > 0 &&
+    !shellSabotaje.rutas.includes(RUTA_OPCIONAL) && /activo|active/.test(instalacion.texto),
+    `«${instalacion.texto}» · ${instalacion.filas} filas · ${RUTA_OPCIONAL} ausente de la caché`);
+  comprobar('El shell crítico queda completo en la caché y el resto del shell también se precachea',
+    faltanCriticas.length === 0 && shellSabotaje.rutas.includes('/iconos/icono-192.png') &&
+    shellSabotaje.rutas.includes('/datos/ranking-lan.json') && shellSabotaje.rutas.includes('/privacidad.html'),
+    faltanCriticas.length ? `faltan: ${faltanCriticas.join(', ')}` : `${shellSabotaje.rutas.length} recursos en ${shellSabotaje.nombres.find((n) => n.includes('shell'))}`);
+
   /* --- Consola limpia --------------------------------------------------- */
   console.log('\nConsola');
   const errores = cdp.eventos
@@ -1690,6 +1853,7 @@ try {
 } finally {
   cdp?.cerrar();
   if (proxyCaida && proxyCaida.exitCode === null) proxyCaida.kill('SIGKILL');
+  servidorSabotaje?.close();
   chrome.kill('SIGKILL');
   await espera(300);
   rmSync(perfil, { recursive: true, force: true });

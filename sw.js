@@ -21,10 +21,16 @@
    app, solo si ninguna ventana tiene el foco) y actualiza el distintivo del
    icono; ver el bloque AVISOS al final.
 
+   Instalacion en dos partes: el shell CRITICO se precachea de forma atomica en
+   install (cache.addAll: o esta entero o la instalacion falla y la pagina
+   vuelve a registrar el SW, ver js/registro-sw.js) y el resto del shell se
+   completa en activate, por recurso y tolerando fallos. Asi el install dura lo
+   minimo y un archivo ausente nunca deja una version a medias ni la tumba.
+
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v10';
+const VERSION = 'v11';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
 const CACHE_DDRAGON = 'ranking-lan-ddragon-v1'; // retratos e indice de campeones
@@ -32,8 +38,12 @@ const CACHE_WIDGETS = 'ranking-lan-widgets-v1'; // ultimo estado difundido del w
 const CACHE_AVISOS = 'ranking-lan-avisos-v1'; // config, instantanea y pendientes de los avisos
 const CACHES_VIGENTES = new Set([CACHE_SHELL, CACHE_DATOS, CACHE_DDRAGON, CACHE_WIDGETS, CACHE_AVISOS]);
 
-/** App shell: lo minimo para que la app abra sin red. */
-const PRECACHE = [
+/**
+ * App shell CRITICO: sin estos archivos la app no abre sin red. Se precachean
+ * de forma atomica en install: si uno falla, la instalacion falla entera y la
+ * pagina reintenta el registro (js/registro-sw.js).
+ */
+const PRECACHE_CRITICO = [
   './',
   './index.html',
   './offline.html',
@@ -48,6 +58,15 @@ const PRECACHE = [
   './js/campeones.js',
   './js/widgets.js',
   './js/avisos.js',
+];
+
+/**
+ * Resto del shell: privacidad, widget, semilla de datos e iconos. Se precachea
+ * en activate, recurso a recurso y tolerando fallos (ver completarShell()): un
+ * archivo ausente solo deja un aviso en consola, y el enrutado de fetch lo
+ * guarda igualmente la primera vez que la pagina lo pide.
+ */
+const PRECACHE_OPCIONAL = [
   './privacidad.html',
   './widgets/top3-lan-plantilla.json',
   './widgets/top3-lan-datos.json',
@@ -62,35 +81,50 @@ const PRECACHE = [
 
 const absoluta = (ruta) => new URL(ruta, self.registration.scope).toString();
 
+/** Peticion de precache: siempre a la red, saltando el cache HTTP del navegador. */
+const peticionPrecache = (ruta) => new Request(absoluta(ruta), { cache: 'reload' });
+
+/**
+ * Precachea PRECACHE_OPCIONAL uno a uno: solo lo que aun no esta en CACHE_SHELL
+ * y solo respuestas 200. Nunca rechaza; los fallos se agrupan en un console.warn.
+ */
+async function completarShell() {
+  const cache = await caches.open(CACHE_SHELL);
+  const resultados = await Promise.allSettled(
+    PRECACHE_OPCIONAL.map(async (ruta) => {
+      const peticion = peticionPrecache(ruta);
+      if (await cache.match(peticion)) return;
+      const respuesta = await fetch(peticion);
+      if (!respuesta.ok) throw new Error(`${ruta} -> ${respuesta.status}`);
+      await cache.put(peticion, respuesta);
+    }),
+  );
+  const fallos = resultados.filter((r) => r.status === 'rejected');
+  if (fallos.length > 0) {
+    console.warn('[SW] recursos opcionales no precacheados:', fallos.map((f) => f.reason?.message));
+  }
+}
+
 /* ==========================================================================
-   INSTALL · precache tolerante a fallos
+   INSTALL · shell critico, atomico y breve
+   --------------------------------------------------------------------------
+   Solo el shell critico, con cache.addAll: o se guardan todos o la version no
+   se instala (y la pagina vuelve a registrar el SW). Cuanto menos dure el
+   install, menos expuesto queda el worker a que el navegador lo detenga a
+   mitad de camino en la primera carga (lo que dejaba la version `redundant`
+   y la pagina sin SW hasta la siguiente visita).
    ========================================================================== */
 self.addEventListener('install', (evento) => {
   evento.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_SHELL);
-
-      // addAll falla en bloque si un solo recurso da error; lo hacemos uno a uno
-      // para que un archivo ausente no impida instalar el service worker.
-      const resultados = await Promise.allSettled(
-        PRECACHE.map(async (ruta) => {
-          const peticion = new Request(absoluta(ruta), { cache: 'reload' });
-          const respuesta = await fetch(peticion);
-          if (!respuesta.ok) throw new Error(`${ruta} -> ${respuesta.status}`);
-          await cache.put(peticion, respuesta);
-        }),
-      );
-
-      const fallos = resultados.filter((r) => r.status === 'rejected');
-      if (fallos.length > 0) {
-        console.warn('[SW] recursos no precacheados:', fallos.map((f) => f.reason?.message));
-      }
+      await cache.addAll(PRECACHE_CRITICO.map(peticionPrecache));
     })(),
   );
 });
 
 /* ==========================================================================
-   ACTIVATE · limpieza de caches antiguos
+   ACTIVATE · limpieza de caches antiguos y resto del shell
    ========================================================================== */
 self.addEventListener('activate', (evento) => {
   evento.waitUntil(
@@ -116,6 +150,10 @@ self.addEventListener('activate', (evento) => {
       }
     })(),
   );
+
+  // El resto del shell va aparte para no retrasar clients.claim(): la
+  // activacion nunca falla por un recurso opcional (completarShell no rechaza).
+  evento.waitUntil(completarShell());
 });
 
 /* ==========================================================================

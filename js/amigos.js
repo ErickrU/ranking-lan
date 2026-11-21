@@ -670,6 +670,7 @@ export function iniciarGrupo(parametros = new URLSearchParams()) {
     estado.cola = nodos.selCola.value;
     guardar();
     render(); // ambas colas ya estan en memoria: no hace falta volver a pedir
+    publicarGrupoActual(); // el SW vigila la cola nueva (config) y toma su linea base
   });
 
   nodos.botonActualizar.addEventListener('click', () => cargarTodos());
@@ -709,6 +710,7 @@ export function iniciarGrupo(parametros = new URLSearchParams()) {
       nodos.selCola.value = estado.cola;
       guardar();
       render();
+      publicarGrupoActual();
     }
   });
 

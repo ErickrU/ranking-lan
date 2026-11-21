@@ -232,7 +232,7 @@ ranking-lan/
 ├── privacidad.html            Política de privacidad (enlazada desde el pie, la ayuda y la Store)
 ├── offline.html               Respaldo de navegación sin red ni caché
 ├── manifest.webmanifest       Identidad instalable: iconos, atajos, capturas
-├── sw.js                      Service worker v10 (precache + estrategias + widgets + avisos)
+├── sw.js                      Service worker v11 (precache + estrategias + widgets + avisos)
 ├── css/estilos.css
 ├── js/
 │   ├── app.js                 Estado, eventos, pestañas, orquestación
@@ -260,6 +260,7 @@ ranking-lan/
     ├── logos-tienda.mjs       Logos de la Store (poster, box art y tiles) → tienda/logos/
     ├── generar-iconos.sh      SVG → PNG con Chrome headless
     ├── generar-datos-demo.mjs Regenera la semilla de demostración
+    ├── sw-primera-visita.mjs  ¿Se instala el SW en la primera visita? N perfiles nuevos de Chrome contra una URL
     └── verificar.mjs          Pruebas end-to-end vía Chrome DevTools Protocol
 ```
 
@@ -275,7 +276,8 @@ npm run iconos     # regenera los PNG desde los SVG
 |---|---|
 | Manifest con iconos, `display: standalone`, atajos y capturas | `manifest.webmanifest` |
 | Icono *maskable* (para que Android no lo recorte mal) | `iconos/icono-maskable-512.png` |
-| Service worker con precache del app shell | `sw.js` → `PRECACHE` |
+| Service worker con precache del app shell | `sw.js` → `PRECACHE_CRITICO` (atómico en `install`) y `PRECACHE_OPCIONAL` (tolerante, en `activate`) |
+| Instalación del SW robusta en la primera visita | `js/registro-sw.js` reintenta el registro si la instalación se interrumpe (hasta 4 veces); `herramientas/sw-primera-visita.mjs` lo mide |
 | Funciona offline | Caché del shell + última clasificación descargada |
 | Instalable con botón propio | `beforeinstallprompt` en `js/registro-sw.js` |
 | Barra de título propia (Window Controls Overlay) | `display_override` en el manifest; `env(titlebar-area-*)`, zonas `drag`/`no-drag` y `geometrychange` en `css/estilos.css` + `js/registro-sw.js` |
@@ -331,7 +333,7 @@ Cuando el service worker responde desde su caché por falta de red, añade la ca
 *Datos en vivo*: la interfaz nunca presenta datos viejos como frescos.
 
 Al desplegar un cambio en el manifest o en archivos precacheados, **sube `VERSION` en `sw.js`**
-(hoy `v10`) para que se borren los cachés anteriores.
+(hoy `v11`) para que se borren los cachés anteriores.
 
 ## Avisos y distintivos
 
@@ -433,9 +435,18 @@ acción *Actualizar* vía service worker, persistencia, botón de cerrar de 44 p
 el registro y el precache del service worker, la sección «Avisos y distintivos» (permiso
 concedido por CDP, notificación de prueba con dos acciones, cambios sintéticos que generan avisos
 y distintivo, limpieza al recuperar el foco, «Comprobar ahora» escribe la instantánea), el aviso
-legal y `/privacidad.html`, la cabecera bajo WCO, el aviso de servidor caído, y que el ladder, el
-grupo y el panel de widgets sigan abriendo con la red desconectada. También regenera las capturas del manifest y la del
-widget (`widgets/top3-lan-captura.png`).
+legal y `/privacidad.html`, la cabecera bajo WCO, el aviso de servidor caído, que el ladder, el
+grupo y el panel de widgets sigan abriendo con la red desconectada, y la instalación del service
+worker contra un servidor auxiliar que niega recursos del precache (un recurso crítico ausente hace
+fallar la primera instalación entera y la página reintenta; uno opcional ausente no impide
+instalar). También regenera las capturas del manifest y la del widget (`widgets/top3-lan-captura.png`).
+
+Para medir la instalación del service worker en la **primera visita** (perfil de Chrome nuevo por
+intento, estados del SW y errores por CDP), contra producción o contra el proxy local:
+
+```bash
+node herramientas/sw-primera-visita.mjs --url https://d3b4s9lb316i67.cloudfront.net/ --intentos 10
+```
 
 ### A mano
 

@@ -264,6 +264,8 @@ async function cargar() {
       tier: estado.tier,
       division: estado.division,
     };
+    // Aun sin datos, el SW debe seguir la seleccion nueva (solo viaja la config).
+    publicarRanking(estado.listado);
   } finally {
     if (miPeticion === peticionEnCurso) {
       estado.cargando = false;

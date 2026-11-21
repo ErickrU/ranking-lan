@@ -77,9 +77,37 @@ if (!('serviceWorker' in navigator)) {
     };
   }
 
-  window.addEventListener('load', async () => {
+  /*
+   * Reintento del registro. En la primera visita de un perfil nuevo el
+   * navegador puede detener el worker a mitad del install (en Chromium, la carga
+   * de una extension con permisos de red reinicia las factorias de red y corta
+   * la del worker que se esta instalando): la version queda `redundant`, el
+   * registro se borra y, sin reintento, la pagina se quedaba sin service worker
+   * (ni widget, ni avisos, ni modo sin conexion) hasta la siguiente visita. Si
+   * la instalacion se interrumpe sin que quede ningun worker (activo, esperando
+   * o instalando), se vuelve a registrar tras una espera creciente, hasta
+   * MAX_REINTENTOS veces; a la segunda o tercera el arranque ya paso.
+   */
+  const MAX_REINTENTOS = 4;
+  const ESPERA_REINTENTO_MS = 500;
+  let reintentos = 0;
+  let registroActual = null;
+
+  function reintentarRegistro(error) {
+    if (navigator.serviceWorker.controller) return; // otra version ya controla la pagina
+    if (reintentos >= MAX_REINTENTOS) {
+      informar('sw.error', { error: error.message });
+      return;
+    }
+    reintentos++;
+    informar('sw.instalando');
+    setTimeout(registrar, ESPERA_REINTENTO_MS * reintentos);
+  }
+
+  async function registrar() {
     try {
       const registro = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+      registroActual = registro;
       informar(registro.active ? 'sw.activo' : 'sw.instalando');
 
       // ¿Quedo una version esperando de una visita anterior?
@@ -95,20 +123,31 @@ if (!('serviceWorker' in navigator)) {
           if (nuevo.state === 'activated' && !registro.waiting) {
             informar('sw.activo');
           }
+          // Instalacion interrumpida o fallida sin ninguna otra version a la
+          // vista (`installing` puede seguir apuntando a `nuevo` un instante):
+          // el registro ha quedado vacio o borrado. Reintentar.
+          if (nuevo.state === 'redundant' && !registro.active && !registro.waiting
+              && (!registro.installing || registro.installing === nuevo)) {
+            reintentarRegistro(new Error('instalación interrumpida'));
+          }
         });
       });
-
-      // Busca actualizaciones al volver a la pestana (max. una vez por hora).
-      let ultimaRevision = Date.now();
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && Date.now() - ultimaRevision > 3600_000) {
-          ultimaRevision = Date.now();
-          registro.update().catch(() => {});
-        }
-      });
     } catch (error) {
-      informar('sw.error', { error: error.message });
+      reintentarRegistro(error);
     }
+  }
+
+  window.addEventListener('load', () => {
+    registrar();
+
+    // Busca actualizaciones al volver a la pestana (max. una vez por hora).
+    let ultimaRevision = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && Date.now() - ultimaRevision > 3600_000) {
+        ultimaRevision = Date.now();
+        registroActual?.update().catch(() => {});
+      }
+    });
   });
 }
 
