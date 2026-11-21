@@ -348,6 +348,7 @@ const DICCIONARIOS = {
     'avisos.sync.noDisponible': 'sincronización en segundo plano no disponible: instala la app para activarla',
     'avisos.cambios.titulo': 'Últimos cambios',
     'avisos.cambios.vacio': 'Todavía no hay cambios registrados. Aquí se anotarán las subidas y bajadas de tu grupo y los cambios del top 3.',
+    'avisos.nuevos': '{n} cambio{plural} nuevo{plural} en «Últimos cambios».',
 
     'toast.nuevaVersion': 'Hay una versión nueva disponible.',
     'toast.recargar': 'Recargar',
@@ -696,6 +697,7 @@ const DICCIONARIOS = {
     'avisos.sync.noDisponible': 'background sync not available: install the app to enable it',
     'avisos.cambios.titulo': 'Latest changes',
     'avisos.cambios.vacio': 'No changes recorded yet. Your group’s promotions and demotions and top 3 changes will be listed here.',
+    'avisos.nuevos': '{n} new change{plural} in “Latest changes”.',
 
     'toast.nuevaVersion': 'A new version is available.',
     'toast.recargar': 'Reload',

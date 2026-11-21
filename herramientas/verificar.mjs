@@ -9,8 +9,13 @@
  *   - la tabla y el podio se pintan con datos
  *   - la seccion "Avisos y distintivos" pide el permiso al activar, el SW
  *     muestra notificaciones con acciones (Browser.grantPermissions concede
- *     el permiso por CDP), los cambios sinteticos generan avisos y pendientes,
- *     el foco los limpia y "Comprobar ahora" escribe la instantanea
+ *     el permiso por CDP), la config publicada al SW esta completa y una
+ *     parcial se fusiona con la guardada, los cambios sinteticos generan
+ *     avisos y pendientes, dos procesados concurrentes no duplican ni pierden
+ *     cambios, con la ventana enfocada (Emulation.setFocusEmulationEnabled)
+ *     no hay notificacion ni distintivo pero la lista se actualiza, el foco
+ *     limpia los pendientes, "Comprobar ahora" escribe la instantanea y la
+ *     notificacion de prueba sale en ingles con la interfaz en ingles
  *   - legal y privacidad: el aviso oficial de Riot (ingles + traduccion) esta
  *     en el pie y en la ayuda, /privacidad.html se sirve, los dotfiles no, y el
  *     manifest trae launch_handler y categorias para la Microsoft Store
@@ -609,6 +614,50 @@ try {
   comprobar('El estado explica la sincronización en segundo plano',
     activarAvisos.estado.includes('segundo plano'), activarAvisos.estado);
 
+  // Lector de ./avisos/config.json (lo que el SW usara en segundo plano).
+  await cdp.evaluar(`(() => {
+    window.__leerConfigAvisos = async () => {
+      const cache = await caches.open('ranking-lan-avisos-v1');
+      const guardada = await cache.match(new URL('./avisos/config.json', location.href).href);
+      return guardada ? guardada.json() : null;
+    };
+    window.__esperarConfigAvisos = async (predicado, ms = 6000) => {
+      const limite = Date.now() + ms;
+      let config = null;
+      while (Date.now() < limite) {
+        config = await window.__leerConfigAvisos();
+        if (predicado(config)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return config;
+    };
+  })()`);
+
+  const configCompleta = await cdp.evaluar(`(async () => {
+    const config = await window.__esperarConfigAvisos((c) => c?.activados === true);
+    let grupo = {};
+    try { grupo = JSON.parse(localStorage.getItem('ranking-lan:grupo') ?? '{}'); } catch {}
+    const valor = (id) => document.getElementById(id).value;
+    return {
+      config,
+      esperado: {
+        miembros: Array.isArray(grupo.miembros) ? grupo.miembros : [],
+        colaGrupo: grupo.cola ?? null,
+        region: valor('sel-region'), cola: valor('sel-cola'), tier: valor('sel-tier'), division: valor('sel-division'),
+        idioma: document.documentElement.lang,
+      },
+    };
+  })()`);
+  {
+    const c = configCompleta.config ?? {};
+    const e = configCompleta.esperado;
+    comprobar('La config publicada al SW está completa: grupo guardado entero, selección seguida e idioma',
+      c.activados === true && c.idioma === e.idioma &&
+      c.region === e.region && c.cola === e.cola && c.tier === e.tier && c.division === e.division &&
+      e.miembros.length > 0 && JSON.stringify(c.grupo?.miembros) === JSON.stringify(e.miembros) && c.grupo?.cola === e.colaGrupo,
+      `grupo ${c.grupo?.miembros?.length ?? 0}/${e.miembros.length} integrantes · ${c.region}/${c.cola}/${c.tier}/${c.division} · idioma ${c.idioma}`);
+  }
+
   const prueba = await cdp.evaluar(`(async () => {
     const desde = window.__mensajesAvisos.length;
     document.getElementById('avisos-probar').click();
@@ -689,6 +738,117 @@ try {
     ['establecido', 'no-soportado', 'error'].includes(sinteticos.badge),
     `n ${sinteticos.n} · ${sinteticos.items} ítems · contador «${sinteticos.contador}» · badge ${sinteticos.badge}`);
 
+  // Los mismos datos sinteticos, compartidos por las comprobaciones siguientes.
+  await cdp.evaluar(`(() => {
+    window.__sinteticos = {
+      config: { activados: true, region: 'la1', cola: 'RANKED_SOLO_5x5', tier: 'CHALLENGER', division: 'I',
+                grupo: { miembros: ['Sintetico#TEST'], cola: 'RANKED_SOLO_5x5' } },
+      ranking: (claves) => ({
+        clave: 'kr|RANKED_FLEX_SR|CHALLENGER|I', region: 'kr', cola: 'RANKED_FLEX_SR', tier: 'CHALLENGER', division: 'I',
+        top3: claves.map((c, i) => ({ clave: c, riotId: c.toUpperCase() + '#KR', lp: 1500 - i * 10 })),
+      }),
+      grupo: (tier, division, lp) => ({
+        region: 'la1', cola: 'RANKED_SOLO_5x5', miembros: [{ riotId: 'Sintetico#TEST', tier, division, lp }],
+      }),
+    };
+  })()`);
+
+  // Tres AVISOS_DATOS en el mismo tick: el mismo cambio dos veces (X, X) y
+  // otro distinto (Y). Sin serializar, ambos X leerian la instantanea vieja y
+  // el cambio saldria duplicado, o una escritura pisaria a la otra.
+  const concurrentes = await cdp.evaluar(`(async () => {
+    const sw = await window.__swActivo();
+    const { config, ranking, grupo } = window.__sinteticos;
+    const antes = window.__mensajesAvisos.filter(x => x.tipo === 'AVISOS_PENDIENTES').at(-1)?.n ?? 0;
+    const desde = window.__mensajesAvisos.length;
+    const x = { tipo: 'AVISOS_DATOS', config, grupo: grupo('EMERALD', 'III', 55) };
+    sw.postMessage(x);
+    sw.postMessage(x);
+    sw.postMessage({ tipo: 'AVISOS_DATOS', config, ranking: ranking(['p3', 'p2', 'p1']) });
+    const limite = Date.now() + 8000;
+    let llegados = [];
+    while (Date.now() < limite) {
+      llegados = window.__mensajesAvisos.slice(desde).filter(m => m.tipo === 'AVISOS_PENDIENTES' && m.origen === 'datos');
+      if (llegados.length >= 3) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const ultimo = llegados.at(-1);
+    const textos = (ultimo?.cambios ?? []).map(c => c.texto);
+    const cache = await caches.open('ranking-lan-avisos-v1');
+    const guardada = await cache.match(new URL('./avisos/instantanea.json', location.href).href);
+    const instantanea = guardada ? await guardada.json() : {};
+    return {
+      llegados: llegados.length, antes, despues: ultimo?.n ?? null,
+      nuevos: llegados.map(m => m.nuevos),
+      esmeralda: textos.filter(t => t.includes('Esmeralda III')).length,
+      top3: textos.filter(t => t.includes('P3#KR, P2#KR')).length,
+      instantaneaGrupo: instantanea.grupo?.['la1|RANKED_SOLO_5x5|sintetico#test']?.tier ?? null,
+      instantaneaTop3: (instantanea.ranking?.['kr|RANKED_FLEX_SR|CHALLENGER|I']?.top3 ?? []).map(j => j.clave).join(','),
+    };
+  })()`);
+  comprobar('Dos procesados concurrentes del mismo cambio producen un único aviso (sin duplicados)',
+    concurrentes.llegados === 3 && concurrentes.esmeralda === 1 && JSON.stringify(concurrentes.nuevos) === '[1,0,1]',
+    `nuevos por mensaje ${JSON.stringify(concurrentes.nuevos)} · «Esmeralda III» ×${concurrentes.esmeralda}`);
+  comprobar('Procesados concurrentes distintos conservan ambos cambios y la instantánea queda entera (sin pérdidas)',
+    concurrentes.top3 === 1 && concurrentes.despues === concurrentes.antes + 2 &&
+    concurrentes.instantaneaGrupo === 'EMERALD' && concurrentes.instantaneaTop3 === 'p3,p2,p1',
+    `n ${concurrentes.antes} → ${concurrentes.despues} · instantánea grupo ${concurrentes.instantaneaGrupo} · top 3 ${concurrentes.instantaneaTop3}`);
+
+  // Ventana enfocada (emulada por CDP): el SW debe ver client.focused === true
+  // y entonces no notificar ni poner distintivo, solo actualizar la lista.
+  await cdp.enviar('Emulation.setFocusEmulationEnabled', { enabled: true });
+  const enfocado = await cdp.evaluar(`(async () => {
+    const sw = await window.__swActivo();
+    const reg = await navigator.serviceWorker.ready;
+    const { config, grupo } = window.__sinteticos;
+    for (const n of await reg.getNotifications()) n.close();
+    let desde = window.__mensajesAvisos.length;
+    sw.postMessage({ tipo: 'AVISOS_VISTOS' }); // parte de 0 pendientes con el foco ya puesto
+    await window.__esperarAviso(x => x.tipo === 'AVISOS_PENDIENTES' && x.origen === 'vistos', desde);
+    const itemsAntes = document.querySelectorAll('#avisos-lista li').length;
+    desde = window.__mensajesAvisos.length;
+    sw.postMessage({ tipo: 'AVISOS_DATOS', config, grupo: grupo('DIAMOND', 'IV', 30) });
+    const m = await window.__esperarAviso(x => x.tipo === 'AVISOS_PENDIENTES' && x.origen === 'datos', desde);
+    await new Promise(r => setTimeout(r, 200));
+    return {
+      hasFocus: document.hasFocus(), llego: !!m,
+      n: m?.n ?? null, badge: m?.badge ?? null, silencioso: m?.silencioso ?? null, nuevos: m?.nuevos ?? null,
+      notificaciones: (await reg.getNotifications()).length,
+      itemsAntes, itemsDespues: document.querySelectorAll('#avisos-lista li').length,
+      primero: document.querySelector('#avisos-lista li .avisos__texto')?.textContent ?? '',
+      contadorOculto: document.getElementById('avisos-contador').hidden,
+      anuncio: document.getElementById('estado-pwa').textContent,
+    };
+  })()`);
+  await cdp.enviar('Emulation.setFocusEmulationEnabled', { enabled: false });
+  comprobar('Con la ventana enfocada no hay notificación ni distintivo, pero la lista «Últimos cambios» se actualiza',
+    enfocado.hasFocus && enfocado.llego && enfocado.badge === 'enfocado' && enfocado.silencioso === true &&
+    enfocado.nuevos === 1 && enfocado.n === 0 && enfocado.notificaciones === 0 && enfocado.contadorOculto &&
+    enfocado.itemsDespues === enfocado.itemsAntes + 1 && enfocado.primero.includes('Diamante IV'),
+    `badge ${enfocado.badge} · ${enfocado.notificaciones} notificaciones · n ${enfocado.n} · lista ${enfocado.itemsAntes} → ${enfocado.itemsDespues}`);
+  comprobar('Y el cambio se anuncia de forma discreta en la región viva',
+    /1 cambio nuevo/.test(enfocado.anuncio), `«${enfocado.anuncio}»`);
+
+  // Una config parcial (solo el idioma) no debe borrar lo demas.
+  const parcial = await cdp.evaluar(`(async () => {
+    const sw = await window.__swActivo();
+    const antes = await window.__leerConfigAvisos();
+    sw.postMessage({ tipo: 'AVISOS_DATOS', config: { idioma: 'en' } });
+    const despues = await window.__esperarConfigAvisos((c) => c?.idioma === 'en');
+    sw.postMessage({ tipo: 'AVISOS_DATOS', config: { idioma: 'es' } });
+    const restaurada = await window.__esperarConfigAvisos((c) => c?.idioma === 'es');
+    return { antes, despues, restaurada };
+  })()`);
+  {
+    const sinIdioma = (c) => JSON.stringify({ ...(c ?? {}), idioma: undefined });
+    const d = parcial.despues ?? {};
+    comprobar('Una config parcial se fusiona con la guardada en vez de reemplazarla',
+      parcial.antes?.idioma === 'es' && d.idioma === 'en' && sinIdioma(parcial.antes) === sinIdioma(d) &&
+      d.activados === true && d.region === 'la1' && d.tier === 'CHALLENGER' &&
+      (d.grupo?.miembros?.length ?? 0) > 0 && parcial.restaurada?.idioma === 'es',
+      `idioma es → en → es · conserva ${d.region}/${d.cola}/${d.tier}/${d.division} y ${d.grupo?.miembros?.length ?? 0} integrantes`);
+  }
+
   const vistos = await cdp.evaluar(`(async () => {
     const desde = window.__mensajesAvisos.length;
     window.dispatchEvent(new Event('focus'));
@@ -722,6 +882,41 @@ try {
     sincronizacion.llego && sincronizacion.hayInstantanea && sincronizacion.ranking.length > 0 &&
     sincronizacion.grupo.includes('la1|RANKED_SOLO_5x5|sintetico#test'),
     `${sincronizacion.ranking.length} claves de ranking · grupo: ${sincronizacion.grupo.join(', ')}`);
+
+  // Cambiar el idioma de la app manda la config al SW; la siguiente
+  // notificacion (la de prueba) debe salir en ese idioma.
+  const pruebaIngles = await cdp.evaluar(`(async () => {
+    const cambiar = (idioma) => {
+      const sel = document.getElementById('sel-idioma');
+      sel.value = idioma;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const reg = await navigator.serviceWorker.ready;
+    const probar = async () => {
+      const desde = window.__mensajesAvisos.length;
+      document.getElementById('avisos-probar').click();
+      const m = await window.__esperarAviso(x => x.tipo === 'AVISOS_PROBADO', desde);
+      const n = (await reg.getNotifications({ tag: 'prueba' }))[0];
+      return { mostrado: m?.mostrado, titulo: n?.title ?? '', cuerpo: n?.body ?? '', lang: n?.lang ?? '',
+               acciones: (n?.actions ?? []).map(a => a.title), anuncio: document.getElementById('estado-pwa').textContent };
+    };
+    cambiar('en');
+    await window.__esperarConfigAvisos((c) => c?.idioma === 'en');
+    const en = await probar();
+    cambiar('es');
+    await window.__esperarConfigAvisos((c) => c?.idioma === 'es');
+    const es = await probar();
+    return { en, es };
+  })()`);
+  comprobar('Con la interfaz en inglés la notificación de prueba sale en inglés (título, cuerpo, acciones y lang)',
+    pruebaIngles.en.mostrado === true && pruebaIngles.en.titulo === 'Test notification · Ranking LAN' &&
+    pruebaIngles.en.lang === 'en' && pruebaIngles.en.acciones.join(' | ') === 'View my group | View ranking' &&
+    pruebaIngles.en.cuerpo.includes('top 3') && !pruebaIngles.en.cuerpo.includes('Así'),
+    `«${pruebaIngles.en.titulo}» · ${pruebaIngles.en.acciones.join(' / ')} · lang ${pruebaIngles.en.lang}`);
+  comprobar('Y vuelve al español al cambiar el idioma',
+    pruebaIngles.es.titulo === 'Aviso de prueba · Ranking LAN' && pruebaIngles.es.lang === 'es' &&
+    pruebaIngles.es.acciones.join(' | ') === 'Ver mi grupo | Ver ranking',
+    `«${pruebaIngles.es.titulo}» · ${pruebaIngles.es.acciones.join(' / ')}`);
 
   const interruptorAvisos = await cdp.evaluar(`(async () => {
     const input = document.getElementById('avisos-interruptor');

@@ -17,13 +17,14 @@
    Y genera los avisos y distintivos de la app (Notifications API + App
    Badging, sin push): compara los datos frescos que publica la pagina (o que
    el propio SW descarga en periodicsync) con su instantanea, muestra una
-   notificacion por cada cambio de "Mi grupo" o del top 3 y actualiza el
-   distintivo del icono; ver el bloque AVISOS al final.
+   notificacion por cada cambio de "Mi grupo" o del top 3 (en el idioma de la
+   app, solo si ninguna ventana tiene el foco) y actualiza el distintivo del
+   icono; ver el bloque AVISOS al final.
 
    Sube VERSION para invalidar los caches viejos en el siguiente despliegue.
    ========================================================================== */
 
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE_SHELL = `ranking-lan-shell-${VERSION}`;
 const CACHE_DATOS = 'ranking-lan-datos-v1'; // compartido con js/api.js
 const CACHE_DDRAGON = 'ranking-lan-ddragon-v1'; // retratos e indice de campeones
@@ -132,11 +133,14 @@ self.addEventListener('message', (evento) => {
 
   // Mensajes de la seccion "Avisos y distintivos" (js/avisos.js); ver el
   // bloque AVISOS al final. Un fallo nunca debe quedar como rechazo sin manejar.
+  // Todo lo que lee y escribe CACHE_AVISOS pasa por enCola(): un procesado a la
+  // vez, en orden de llegada, para que dos mensajes casi simultaneos (o uno
+  // durante un periodicsync) no se pisen la instantanea ni los pendientes.
   const atender = (tarea) => evento.waitUntil(tarea.catch((error) => console.warn('[SW] avisos', error)));
   switch (mensaje.tipo) {
-    case 'AVISOS_DATOS': atender(recibirDatosAvisos(mensaje)); return;
-    case 'AVISOS_PROBAR': atender(mostrarPrueba()); return;
-    case 'AVISOS_VISTOS': atender(marcarVistos()); return;
+    case 'AVISOS_DATOS': atender(enCola(() => recibirDatosAvisos(mensaje))); return;
+    case 'AVISOS_PROBAR': atender(enCola(mostrarPrueba)); return;
+    case 'AVISOS_VISTOS': atender(enCola(marcarVistos)); return;
     case 'AVISOS_SINCRONIZAR': atender(sincronizarAvisos()); return;
     case 'AVISOS_ABRIR': atender(abrirDestino(mensaje.accion === 'ranking' ? 'global' : 'grupo')); return;
     default: break;
@@ -508,11 +512,16 @@ if ('widgets' in self) {
    AVISOS_SINCRONIZAR (misma sincronizarAvisos() que periodicsync) y
    AVISOS_ABRIR {accion} (simulador del clic: misma abrirDestino() que
    notificationclick).
-   SW -> todas las ventanas: AVISOS_PENDIENTES {n, cambios, badge, origen},
-   AVISOS_PROBADO {mostrado, badge} y AVISOS_IR {vista}.
+   SW -> todas las ventanas: AVISOS_PENDIENTES {n, cambios, badge, origen,
+   nuevos, silencioso}, AVISOS_PROBADO {mostrado, badge} y AVISOS_IR {vista}.
 
-   Notificaciones y distintivo solo si config.activados y el permiso esta
-   concedido; la instantanea se actualiza siempre. Textos en espanol.
+   La config que publica la pagina describe la intencion del usuario (grupo
+   completo guardado, seleccion seguida, idioma, preferencia) y aqui se
+   FUSIONA con la guardada: un mensaje parcial nunca borra lo que no trae.
+   Notificaciones y distintivo solo si config.activados, el permiso esta
+   concedido y ninguna ventana de la app tiene el foco (con la app a la vista
+   solo se actualiza la lista "Ultimos cambios"); la instantanea se actualiza
+   siempre. Textos en el idioma de la app (config.idioma, 'es' | 'en').
    ========================================================================== */
 const UMBRAL_LP = 20;
 const MAX_MIEMBROS_AVISOS = 20;
@@ -524,20 +533,107 @@ const ETIQUETA_REGION = {
   la1: 'LAN', la2: 'LAS', na1: 'NA', br1: 'BR', euw1: 'EUW', eun1: 'EUNE', tr1: 'TR', ru: 'RU',
   me1: 'ME', kr: 'KR', jp1: 'JP', oc1: 'OCE', sg2: 'SEA', tw2: 'TW', vn2: 'VN',
 };
-// Mismos nombres que TIERS en js/api.js.
-const NOMBRE_TIER = {
-  CHALLENGER: 'Retador', GRANDMASTER: 'Gran Maestro', MASTER: 'Maestro', DIAMOND: 'Diamante',
-  EMERALD: 'Esmeralda', PLATINUM: 'Platino', GOLD: 'Oro', SILVER: 'Plata', BRONZE: 'Bronce',
-  IRON: 'Hierro', UNRANKED: 'Sin clasificar',
-};
-const NOMBRE_COLA = { RANKED_SOLO_5x5: 'Solo/Dúo', RANKED_FLEX_SR: 'Flexible' };
 // Mismo orden y pesos que puntuacionRango() en js/api.js.
 const ORDEN_TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER'];
 const VALOR_DIVISION = { I: 3, II: 2, III: 1, IV: 0 };
 const TIERS_APEX = new Set(['CHALLENGER', 'GRANDMASTER', 'MASTER']);
 
-const ACCION_GRUPO = { action: 'grupo', title: 'Ver mi grupo' };
-const ACCION_RANKING = { action: 'ranking', title: 'Ver ranking' };
+/* --------------------------------- i18n ---------------------------------- */
+
+// El SW no puede importar js/i18n.js (modulo ES con DOM y localStorage), asi
+// que lleva su propio diccionario con el MISMO esquema de claves y la misma
+// interpolacion {variable}: 'tier.*' y 'cola.*' son copia literal de js/i18n.js
+// y 'avisos.notif.*' son las cadenas que solo existen aqui. Si cambias un
+// texto en js/i18n.js, cambialo tambien aqui.
+const IDIOMAS_SW = ['es', 'en'];
+const IDIOMA_POR_DEFECTO = 'es';
+const DICCIONARIOS_SW = {
+  es: {
+    'tier.CHALLENGER': 'Retador',
+    'tier.GRANDMASTER': 'Gran Maestro',
+    'tier.MASTER': 'Maestro',
+    'tier.DIAMOND': 'Diamante',
+    'tier.EMERALD': 'Esmeralda',
+    'tier.PLATINUM': 'Platino',
+    'tier.GOLD': 'Oro',
+    'tier.SILVER': 'Plata',
+    'tier.BRONZE': 'Bronce',
+    'tier.IRON': 'Hierro',
+    'tier.UNRANKED': 'Sin clasificar',
+    'cola.RANKED_SOLO_5x5': 'Solo / Dúo',
+    'cola.RANKED_FLEX_SR': 'Flexible',
+    'avisos.notif.grupo.titulo': 'Mi grupo · Ranking LAN',
+    'avisos.notif.ranking.titulo': 'Top 3 · Ranking LAN',
+    'avisos.notif.prueba.titulo': 'Aviso de prueba · Ranking LAN',
+    'avisos.notif.prueba.cuerpo': 'Así avisaremos de las subidas y bajadas de tu grupo y de los cambios del top 3.',
+    'avisos.notif.accion.grupo': 'Ver mi grupo',
+    'avisos.notif.accion.ranking': 'Ver ranking',
+    'avisos.notif.subio': '{riotId} subió a {liga} ({lp} LP)',
+    'avisos.notif.bajo': '{riotId} bajó a {liga} ({lp} LP)',
+    'avisos.notif.gano': '{riotId} ganó {delta} LP ({liga} · {lp} LP)',
+    'avisos.notif.perdio': '{riotId} perdió {delta} LP ({liga} · {lp} LP)',
+    'avisos.notif.top3': 'Nuevo top 3 en {region} · {liga} · {cola}: {lista}',
+    'avisos.notif.y': ' y ',
+  },
+  en: {
+    'tier.CHALLENGER': 'Challenger',
+    'tier.GRANDMASTER': 'Grandmaster',
+    'tier.MASTER': 'Master',
+    'tier.DIAMOND': 'Diamond',
+    'tier.EMERALD': 'Emerald',
+    'tier.PLATINUM': 'Platinum',
+    'tier.GOLD': 'Gold',
+    'tier.SILVER': 'Silver',
+    'tier.BRONZE': 'Bronze',
+    'tier.IRON': 'Iron',
+    'tier.UNRANKED': 'Unranked',
+    'cola.RANKED_SOLO_5x5': 'Solo / Duo',
+    'cola.RANKED_FLEX_SR': 'Flex',
+    'avisos.notif.grupo.titulo': 'My group · Ranking LAN',
+    'avisos.notif.ranking.titulo': 'Top 3 · Ranking LAN',
+    'avisos.notif.prueba.titulo': 'Test notification · Ranking LAN',
+    'avisos.notif.prueba.cuerpo': 'This is how we will notify you about your group’s promotions and demotions and top 3 changes.',
+    'avisos.notif.accion.grupo': 'View my group',
+    'avisos.notif.accion.ranking': 'View ranking',
+    'avisos.notif.subio': '{riotId} moved up to {liga} ({lp} LP)',
+    'avisos.notif.bajo': '{riotId} moved down to {liga} ({lp} LP)',
+    'avisos.notif.gano': '{riotId} gained {delta} LP ({liga} · {lp} LP)',
+    'avisos.notif.perdio': '{riotId} lost {delta} LP ({liga} · {lp} LP)',
+    'avisos.notif.top3': 'New top 3 in {region} · {liga} · {cola}: {lista}',
+    'avisos.notif.y': ' and ',
+  },
+};
+
+const idiomaValido = (valor) => IDIOMAS_SW.includes(valor);
+
+/** Traduce una clave en el idioma dado interpolando {variables}, como t() en js/i18n.js. */
+function tSw(idioma, clave, vars) {
+  const diccionario = DICCIONARIOS_SW[idiomaValido(idioma) ? idioma : IDIOMA_POR_DEFECTO];
+  let texto = diccionario[clave] ?? DICCIONARIOS_SW[IDIOMA_POR_DEFECTO][clave] ?? clave;
+  if (vars) {
+    for (const [nombre, valor] of Object.entries(vars)) {
+      texto = texto.replaceAll(`{${nombre}}`, String(valor));
+    }
+  }
+  return texto;
+}
+
+/* ------------------------------ serializacion ---------------------------- */
+
+let colaAvisos = Promise.resolve();
+
+/**
+ * Ejecuta `tarea` cuando terminen las anteriores: los procesados que leen y
+ * escriben CACHE_AVISOS (instantanea, pendientes, config) van de uno en uno y
+ * en orden de llegada, asi dos AVISOS_DATOS casi simultaneos, un AVISOS_VISTOS
+ * durante un procesado o un periodicsync a la vez que "Comprobar ahora" no
+ * pierden ni duplican cambios. Un fallo no rompe la cola.
+ */
+function enCola(tarea) {
+  const turno = colaAvisos.then(() => tarea(), () => tarea());
+  colaAvisos = turno.then(() => {}, () => {});
+  return turno;
+}
 
 /* ----------------------------- persistencia ------------------------------ */
 
@@ -589,27 +685,61 @@ function validarJugadorTop(bruto) {
   return { clave, riotId, lp };
 }
 
+/** Config vacia: lo que hay antes del primer AVISOS_DATOS. */
+const CONFIG_VACIA = () => ({
+  activados: false, idioma: IDIOMA_POR_DEFECTO, region: null, cola: null, tier: null, division: null,
+  grupo: { miembros: [], cola: null },
+});
+
+/**
+ * Valida una config parcial: solo conserva los campos presentes y correctos
+ * (los ausentes o invalidos no aparecen, para que fusionarConfig() mantenga
+ * el valor guardado). `grupo` solo cuenta si viene como objeto: una lista
+ * vacia explicita si reemplaza a la anterior (el usuario quito a todos).
+ */
+function validarConfigParcial(config) {
+  const parcial = {};
+  if (typeof config.activados === 'boolean') parcial.activados = config.activados;
+  if (idiomaValido(config.idioma)) parcial.idioma = config.idioma;
+  for (const campo of ['region', 'cola', 'tier', 'division']) {
+    if (codigoValido(config[campo])) parcial[campo] = config[campo];
+  }
+  if (config.grupo && typeof config.grupo === 'object') {
+    parcial.grupo = {
+      miembros: Array.isArray(config.grupo.miembros)
+        ? config.grupo.miembros.filter((r) => textoValido(r, MAX_RIOT_ID)).slice(0, MAX_MIEMBROS_AVISOS)
+        : [],
+      cola: codigoValido(config.grupo.cola) ? config.grupo.cola : null,
+    };
+  }
+  return parcial;
+}
+
+/** Config guardada + parcial validada = config completa (nunca pierde campos). */
+function fusionarConfig(guardada, parcial) {
+  const base = guardada && typeof guardada === 'object' ? guardada : {};
+  const grupo = parcial.grupo ?? (base.grupo && typeof base.grupo === 'object' ? base.grupo : null);
+  return {
+    ...CONFIG_VACIA(),
+    ...base,
+    ...parcial,
+    grupo: {
+      miembros: Array.isArray(grupo?.miembros) ? grupo.miembros : [],
+      cola: codigoValido(grupo?.cola) ? grupo.cola : null,
+    },
+  };
+}
+
 /**
  * Valida tipos y topes de un AVISOS_DATOS antes de usar nada. Cada parte que
- * no cumple se descarta por separado (queda null).
+ * no cumple se descarta por separado (queda null). `config` sale como parcial
+ * validada (ver validarConfigParcial).
  */
 function validarDatosAvisos(mensaje) {
   const salida = { config: null, ranking: null, grupo: null };
   const { config, ranking, grupo } = mensaje;
 
-  if (config && typeof config === 'object') {
-    const miembros = Array.isArray(config.grupo?.miembros)
-      ? config.grupo.miembros.filter((r) => textoValido(r, MAX_RIOT_ID)).slice(0, MAX_MIEMBROS_AVISOS)
-      : [];
-    salida.config = {
-      activados: config.activados === true,
-      region: codigoValido(config.region) ? config.region : null,
-      cola: codigoValido(config.cola) ? config.cola : null,
-      tier: codigoValido(config.tier) ? config.tier : null,
-      division: codigoValido(config.division) ? config.division : null,
-      grupo: { miembros, cola: codigoValido(config.grupo?.cola) ? config.grupo.cola : null },
-    };
-  }
+  if (config && typeof config === 'object') salida.config = validarConfigParcial(config);
 
   if (ranking && typeof ranking === 'object') {
     const { region, cola, tier, division } = ranking;
@@ -640,42 +770,62 @@ const puntuacion = ({ tier, division, lp }) => {
   return indice < 0 ? -1 : indice * 1_000_000 + (VALOR_DIVISION[division] ?? 0) * 10_000 + lp;
 };
 
-/** "Oro II" o "Retador" (la elite no muestra division), como nombreRango() en js/ui.js. */
-const nombreLiga = ({ tier, division }) =>
-  TIERS_APEX.has(tier) ? NOMBRE_TIER[tier] : `${NOMBRE_TIER[tier] ?? tier} ${division}`;
+/** Traduce un codigo (tier o cola) o lo devuelve tal cual si no esta en el diccionario. */
+function nombreCodigo(prefijo, codigo, idioma) {
+  const nombre = tSw(idioma, `${prefijo}.${codigo}`);
+  return nombre === `${prefijo}.${codigo}` ? codigo : nombre;
+}
 
-function textoCambioGrupo(riotId, previo, actual) {
+/** "Oro II" o "Retador" (la elite no muestra division), como nombreRango() en js/ui.js. */
+const nombreLiga = ({ tier, division }, idioma) =>
+  TIERS_APEX.has(tier) ? nombreCodigo('tier', tier, idioma) : `${nombreCodigo('tier', tier, idioma)} ${division}`;
+
+function textoCambioGrupo(riotId, previo, actual, idioma) {
+  const liga = nombreLiga(actual, idioma);
   if (previo.tier !== actual.tier || previo.division !== actual.division) {
     const sube = puntuacion(actual) >= puntuacion(previo);
-    return `${riotId} ${sube ? 'subió' : 'bajó'} a ${nombreLiga(actual)} (${actual.lp} LP)`;
+    return tSw(idioma, sube ? 'avisos.notif.subio' : 'avisos.notif.bajo', { riotId, liga, lp: actual.lp });
   }
   const delta = actual.lp - previo.lp;
   if (Math.abs(delta) < UMBRAL_LP) return null;
-  return `${riotId} ${delta > 0 ? 'ganó' : 'perdió'} ${Math.abs(delta)} LP (${nombreLiga(actual)} · ${actual.lp} LP)`;
+  return tSw(idioma, delta > 0 ? 'avisos.notif.gano' : 'avisos.notif.perdio', { riotId, liga, lp: actual.lp, delta: Math.abs(delta) });
 }
 
-function textoCambioRanking({ region, cola, tier, division, top3 }) {
+function textoCambioRanking({ region, cola, tier, division, top3 }, idioma) {
   const nombres = top3.map((j) => j.riotId);
-  const lista = nombres.length > 1 ? `${nombres.slice(0, -1).join(', ')} y ${nombres.at(-1)}` : nombres.join('');
-  const etiquetaRegion = ETIQUETA_REGION[region] ?? region.toUpperCase();
-  return `Nuevo top 3 en ${etiquetaRegion} · ${nombreLiga({ tier, division })} · ${NOMBRE_COLA[cola] ?? cola}: ${lista}`;
+  const lista = nombres.length > 1
+    ? `${nombres.slice(0, -1).join(', ')}${tSw(idioma, 'avisos.notif.y')}${nombres.at(-1)}`
+    : nombres.join('');
+  return tSw(idioma, 'avisos.notif.top3', {
+    region: ETIQUETA_REGION[region] ?? region.toUpperCase(),
+    liga: nombreLiga({ tier, division }, idioma),
+    cola: nombreCodigo('cola', cola, idioma),
+    lista,
+  });
 }
 
 /* ------------------------- notificaciones y badge ------------------------ */
 
 const permisoConcedido = () => typeof self.Notification !== 'undefined' && self.Notification.permission === 'granted';
 
+/** Las dos acciones de toda notificacion, en el idioma de la app. */
+const accionesNotificacion = (tag, idioma) => {
+  const grupo = { action: 'grupo', title: tSw(idioma, 'avisos.notif.accion.grupo') };
+  const ranking = { action: 'ranking', title: tSw(idioma, 'avisos.notif.accion.ranking') };
+  return tag === 'ranking' ? [ranking, grupo] : [grupo, ranking];
+};
+
 /** Muestra (o reemplaza, por tag) una notificacion con las dos acciones. Devuelve si se mostro. */
-async function mostrarNotificacion(tag, titulo, cuerpo, vista) {
+async function mostrarNotificacion(tag, titulo, cuerpo, vista, idioma) {
   try {
     await self.registration.showNotification(titulo, {
       body: cuerpo,
       tag,
       renotify: true,
-      lang: 'es',
+      lang: idiomaValido(idioma) ? idioma : IDIOMA_POR_DEFECTO,
       icon: absoluta('./iconos/icono-192.png'),
       data: { vista },
-      actions: tag === 'ranking' ? [ACCION_RANKING, ACCION_GRUPO] : [ACCION_GRUPO, ACCION_RANKING],
+      actions: accionesNotificacion(tag, idioma),
     });
     return true;
   } catch (error) {
@@ -685,13 +835,27 @@ async function mostrarNotificacion(tag, titulo, cuerpo, vista) {
 }
 
 /** Una notificacion por tipo: todos los cambios del grupo juntos y el top 3 aparte. */
-async function mostrarAvisos(cambios) {
+async function mostrarAvisos(cambios, idioma) {
   const grupo = cambios.filter((c) => c.tipo === 'grupo').map((c) => c.texto);
   const ranking = cambios.filter((c) => c.tipo === 'ranking').map((c) => c.texto);
   const tareas = [];
-  if (grupo.length > 0) tareas.push(mostrarNotificacion('grupo', 'Mi grupo · Ranking LAN', grupo.join('\n'), 'grupo'));
-  if (ranking.length > 0) tareas.push(mostrarNotificacion('ranking', 'Top 3 · Ranking LAN', ranking.join('\n'), 'global'));
+  if (grupo.length > 0) {
+    tareas.push(mostrarNotificacion('grupo', tSw(idioma, 'avisos.notif.grupo.titulo'), grupo.join('\n'), 'grupo', idioma));
+  }
+  if (ranking.length > 0) {
+    tareas.push(mostrarNotificacion('ranking', tSw(idioma, 'avisos.notif.ranking.titulo'), ranking.join('\n'), 'global', idioma));
+  }
   await Promise.all(tareas);
+}
+
+/** Una ventana de la app visible y con el foco: el usuario ya esta mirando. */
+async function hayVentanaEnfocada() {
+  try {
+    const clientes = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    return clientes.some((c) => c.focused === true && c.visibilityState !== 'hidden');
+  } catch {
+    return false;
+  }
 }
 
 /** Pone el distintivo en n (0 lo limpia). Devuelve 'establecido' | 'limpio' | 'no-soportado' | 'error'. */
@@ -716,9 +880,15 @@ async function difundirAvisos(mensaje) {
 /**
  * Compara ranking y grupo con la instantanea, la actualiza, y si los avisos
  * estan activados notifica, acumula pendientes y actualiza el distintivo.
- * La primera vez que se ve una clave solo se guarda.
+ * La primera vez que se ve una clave solo se guarda. Con una ventana de la
+ * app enfocada no hay notificacion ni distintivo: los cambios van solo a la
+ * lista "Ultimos cambios" (ya vistos, no suman al contador) y la pagina los
+ * anuncia de forma discreta.
+ * Debe ejecutarse dentro de enCola() (lee y escribe CACHE_AVISOS).
  */
 async function procesarAvisos({ ranking, grupo }, origen) {
+  const config = fusionarConfig(await leerAvisos('config'), {});
+  const idioma = config.idioma;
   const guardada = await leerAvisos('instantanea');
   const instantanea = {
     grupo: guardada?.grupo && typeof guardada.grupo === 'object' ? guardada.grupo : {},
@@ -733,7 +903,7 @@ async function procesarAvisos({ ranking, grupo }, origen) {
       const actual = { tier: miembro.tier, division: miembro.division, lp: miembro.lp };
       const previo = instantanea.grupo[clave];
       if (previo && typeof previo === 'object') {
-        const texto = textoCambioGrupo(miembro.riotId, previo, actual);
+        const texto = textoCambioGrupo(miembro.riotId, previo, actual, idioma);
         if (texto) cambios.push({ tipo: 'grupo', texto, momento });
       }
       instantanea.grupo[clave] = actual;
@@ -744,50 +914,72 @@ async function procesarAvisos({ ranking, grupo }, origen) {
     const previo = instantanea.ranking[ranking.clave];
     const secuencia = (top3) => (Array.isArray(top3) ? top3.map((j) => j?.clave).join(',') : '');
     if (previo && secuencia(previo.top3) !== secuencia(ranking.top3)) {
-      cambios.push({ tipo: 'ranking', texto: textoCambioRanking(ranking), momento });
+      cambios.push({ tipo: 'ranking', texto: textoCambioRanking(ranking, idioma), momento });
     }
     instantanea.ranking[ranking.clave] = { top3: ranking.top3 };
   }
 
   await guardarAvisos('instantanea', instantanea);
 
-  const config = await leerAvisos('config');
   const pendientes = normalizarPendientes(await leerAvisos('pendientes'));
   let badge = 'omitido';
-  if (config?.activados === true && permisoConcedido()) {
+  let silencioso = false;
+  if (config.activados === true && permisoConcedido()) {
+    silencioso = await hayVentanaEnfocada();
     if (cambios.length > 0) {
-      await mostrarAvisos(cambios);
-      pendientes.n += cambios.length;
+      if (!silencioso) {
+        await mostrarAvisos(cambios, idioma);
+        pendientes.n += cambios.length;
+      }
       pendientes.cambios = [...cambios, ...pendientes.cambios].slice(0, MAX_CAMBIOS);
       await guardarAvisos('pendientes', pendientes);
     }
-    badge = await actualizarDistintivo(pendientes.n);
+    badge = silencioso ? 'enfocado' : await actualizarDistintivo(pendientes.n);
   }
 
-  await difundirAvisos({ tipo: 'AVISOS_PENDIENTES', n: pendientes.n, cambios: pendientes.cambios, badge, origen });
+  await difundirAvisos({
+    tipo: 'AVISOS_PENDIENTES',
+    n: pendientes.n,
+    cambios: pendientes.cambios,
+    badge,
+    origen,
+    nuevos: cambios.length,
+    silencioso,
+  });
 }
 
-/** AVISOS_DATOS: guarda la config si viene y procesa ranking/grupo si vienen. */
+/**
+ * AVISOS_DATOS: fusiona la config si viene y procesa ranking/grupo si vienen.
+ * Debe ejecutarse dentro de enCola().
+ */
 async function recibirDatosAvisos(mensaje) {
   const { config, ranking, grupo } = validarDatosAvisos(mensaje);
-  if (config) await guardarAvisos('config', config);
+  if (config) await guardarAvisos('config', fusionarConfig(await leerAvisos('config'), config));
   if (ranking || grupo) await procesarAvisos({ ranking, grupo }, 'datos');
 }
 
-/** AVISOS_PROBAR: notificacion de ejemplo y distintivo en 1 (sin tocar pendientes). */
+/**
+ * AVISOS_PROBAR: notificacion de ejemplo en el idioma de la app y distintivo
+ * en 1 (sin tocar pendientes). Debe ejecutarse dentro de enCola().
+ */
 async function mostrarPrueba() {
+  const { idioma } = fusionarConfig(await leerAvisos('config'), {});
   const mostrado = await mostrarNotificacion(
     'prueba',
-    'Aviso de prueba · Ranking LAN',
-    'Así avisaremos de las subidas y bajadas de tu grupo y de los cambios del top 3.',
+    tSw(idioma, 'avisos.notif.prueba.titulo'),
+    tSw(idioma, 'avisos.notif.prueba.cuerpo'),
     'global',
+    idioma,
   );
   const pendientes = normalizarPendientes(await leerAvisos('pendientes'));
   const badge = await actualizarDistintivo(Math.max(1, pendientes.n));
   await difundirAvisos({ tipo: 'AVISOS_PROBADO', mostrado, badge });
 }
 
-/** AVISOS_VISTOS: la pagina recupero el foco; pendientes a 0 y distintivo limpio. */
+/**
+ * AVISOS_VISTOS: la pagina recupero el foco; pendientes a 0 y distintivo
+ * limpio. Debe ejecutarse dentro de enCola().
+ */
 async function marcarVistos() {
   const pendientes = normalizarPendientes(await leerAvisos('pendientes'));
   if (pendientes.n !== 0) {
@@ -835,11 +1027,13 @@ async function descargarYGuardar(url) {
 /**
  * Lee la config, consulta al proxy el ranking seleccionado y a cada integrante
  * del grupo y pasa el resultado por procesarAvisos(). Fallos de red: se omite
- * esa parte con console.warn. La usan periodicsync y "Comprobar ahora".
+ * esa parte con console.warn. La usan periodicsync y "Comprobar ahora". Las
+ * descargas van fuera de la cola (no bloquean a la pagina); solo el procesado
+ * final se serializa.
  */
 async function sincronizarAvisos() {
-  const config = await leerAvisos('config');
-  if (!config?.activados) return;
+  const config = fusionarConfig(await leerAvisos('config'), {});
+  if (!config.activados) return;
 
   const { region, cola, tier, division } = config;
   let ranking = null;
@@ -875,7 +1069,7 @@ async function sincronizarAvisos() {
     grupo = valido;
   }
 
-  await procesarAvisos({ ranking, grupo }, 'sincronizacion');
+  await enCola(() => procesarAvisos({ ranking, grupo }, 'sincronizacion'));
 }
 
 /* ------------------------------ navegacion ------------------------------- */

@@ -11,12 +11,23 @@
  *
  * El permiso de notificaciones se pide SOLO al pulsar «Activar avisos». La
  * preferencia vive en localStorage ('ranking-lan:avisos') y viaja ademas en
- * `config` para que el SW la conozca en segundo plano. Sin innerHTML.
+ * `config` para que el SW la conozca en segundo plano.
+ *
+ * `config` describe la INTENCION del usuario, no lo ultimo que llego fresco:
+ * el grupo completo guardado por amigos.js ('ranking-lan:grupo'), la seleccion
+ * seguida (ultimo listado o, si aun no hay, las preferencias guardadas por
+ * app.js) y el idioma. Asi la sincronizacion periodica tiene todo lo que
+ * necesita aunque el arranque fuera sin red o un integrante diera error.
+ * Sin innerHTML.
  */
 
-import { t, localeActual } from './i18n.js';
+import { t, localeActual, idiomaActual } from './i18n.js';
 
 const CLAVE_AVISOS = 'ranking-lan:avisos';
+const CLAVE_GRUPO = 'ranking-lan:grupo'; // la escribe js/amigos.js
+const CLAVE_PREFERENCIAS = 'ranking-lan:preferencias'; // la escribe js/app.js
+const MAX_MIEMBROS = 20; // = MAX_MIEMBROS en js/amigos.js
+const SELECCION_POR_DEFECTO = { region: 'la1', cola: 'RANKED_SOLO_5x5', tier: 'CHALLENGER', division: 'I' };
 const TAG_SYNC = 'avisos';
 const INTERVALO_SYNC_MS = 12 * 60 * 60 * 1000;
 
@@ -44,7 +55,6 @@ const nodos = {
 const estado = {
   activados: false,
   ultimaSeleccion: null, // { region, cola, tier, division } del ultimo listado
-  ultimoGrupo: null,     // { cola, region, miembros:[{riotId, tier, division, lp}] }
   ultimosCambios: [],    // lo ultimo difundido por el SW, para repintar al traducir
   ultimoBadge: null,
   ultimoTexto: null,     // { clave, sync } del texto de estado, para retraducir
@@ -77,19 +87,39 @@ function enviar(mensaje) {
     .catch(() => {});
 }
 
+function leerJson(clave) {
+  try {
+    const valor = JSON.parse(localStorage.getItem(clave) ?? 'null');
+    return valor && typeof valor === 'object' ? valor : {};
+  } catch {
+    return {}; // localStorage bloqueado o JSON corrupto
+  }
+}
+
+const cadena = (valor) => (typeof valor === 'string' && valor.length > 0 ? valor : null);
+
+/**
+ * Config COMPLETA para el SW: preferencia, idioma, seleccion seguida (ultimo
+ * listado > preferencias guardadas > valores por defecto de app.js) y el grupo
+ * entero tal como lo guarda amigos.js, incluidos los integrantes que hoy no
+ * cargaron o vinieron de cache. El SW valida cada campo antes de usarlo.
+ */
 function componerConfig() {
   const seleccion = estado.ultimaSeleccion ?? {};
-  const grupo = estado.ultimoGrupo;
+  const preferencias = leerJson(CLAVE_PREFERENCIAS);
+  const grupo = leerJson(CLAVE_GRUPO);
+  const elegir = (campo) => cadena(seleccion[campo]) ?? cadena(preferencias[campo]) ?? SELECCION_POR_DEFECTO[campo];
+  const miembros = Array.isArray(grupo.miembros)
+    ? grupo.miembros.filter((m) => typeof m === 'string' && m.length > 0).slice(0, MAX_MIEMBROS)
+    : [];
   return {
     activados: estado.activados,
-    region: seleccion.region ?? grupo?.region ?? null,
-    cola: seleccion.cola ?? null,
-    tier: seleccion.tier ?? null,
-    division: seleccion.division ?? null,
-    grupo: {
-      miembros: grupo ? grupo.miembros.map((m) => m.riotId) : [],
-      cola: grupo?.cola ?? null,
-    },
+    idioma: idiomaActual(),
+    region: elegir('region'),
+    cola: elegir('cola'),
+    tier: elegir('tier'),
+    division: elegir('division'),
+    grupo: { miembros, cola: cadena(grupo.cola) ?? SELECCION_POR_DEFECTO.cola },
   };
 }
 
@@ -120,11 +150,12 @@ export function publicarRanking(listado) {
 
 /**
  * amigos.js termina cargarTodos()/agregar()/quitar(). `miembros` llega ya
- * filtrado: solo integrantes clasificados y con datos frescos.
+ * filtrado (solo integrantes clasificados y con datos frescos): es lo que se
+ * compara con la instantanea. La lista completa a vigilar va en `config`,
+ * leida de lo que amigos.js acaba de guardar.
  */
 export function publicarGrupo({ cola, region, miembros }) {
   if (!Array.isArray(miembros)) return;
-  estado.ultimoGrupo = { cola, region, miembros };
   enviar({ tipo: 'AVISOS_DATOS', config: componerConfig(), grupo: { cola, region, miembros } });
 }
 
@@ -291,6 +322,11 @@ function recibir(evento) {
   switch (mensaje.tipo) {
     case 'AVISOS_PENDIENTES':
       pintarPendientes(mensaje);
+      // Con la ventana enfocada el SW no notifica ni pone distintivo: los
+      // cambios nuevos se anuncian de forma discreta en la region viva.
+      if (mensaje.silencioso === true && Number.isInteger(mensaje.nuevos) && mensaje.nuevos > 0) {
+        anunciar(t('avisos.nuevos', { n: mensaje.nuevos, plural: mensaje.nuevos === 1 ? '' : 's' }));
+      }
       break;
     case 'AVISOS_PROBADO':
       anunciar(t(mensaje.mostrado ? 'avisos.probado' : 'avisos.noMostrado'));
@@ -308,10 +344,15 @@ function recibir(evento) {
  * Arranque
  * ------------------------------------------------------------------ */
 
-/** Repinta los textos que no pasan por data-i18n (estado y horas de la lista). */
+/**
+ * Cambio de idioma: repinta los textos que no pasan por data-i18n (estado y
+ * horas de la lista) y manda la config al SW para que las proximas
+ * notificaciones salgan en el idioma nuevo.
+ */
 export function retraducirAvisos() {
   if (estado.ultimoTexto) informar(estado.ultimoTexto.clave, estado.ultimoTexto.sync);
   pintarLista(estado.ultimosCambios);
+  enviarConfig();
 }
 
 /**
