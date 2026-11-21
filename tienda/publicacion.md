@@ -3,13 +3,16 @@
 Guía paso a paso. Los textos del listado están en `listado-microsoft-store.md` y las capturas en
 `capturas/`. La app se publica como PWA alojada: el paquete MSIX solo apunta a la URL de
 producción, así que cada despliegue web actualiza la app de la Store sin volver a enviar paquete.
+Si la certificación falla, el plan de respuesta (causas probables por número de política,
+procedimiento de corrección, reenvío y apelación, y lista de verificación rápida) está en
+[`certificacion.md`](certificacion.md).
 
 ## 1. Requisitos previos
 
 - Cuenta de desarrollador en [Partner Center](https://partner.microsoft.com/dashboard) (pago
   único; la verificación de identidad puede tardar días).
-- La app desplegada en https://d3b4s9lb316i67.cloudfront.net/ con el service worker **v10**
-  (`const VERSION = 'v10'` en `sw.js`) y https://d3b4s9lb316i67.cloudfront.net/privacidad.html
+- La app desplegada en https://d3b4s9lb316i67.cloudfront.net/ con el service worker **v11**
+  (`const VERSION = 'v11'` en `sw.js`) y https://d3b4s9lb316i67.cloudfront.net/privacidad.html
   respondiendo 200. Comprobar:
 
   ```bash
@@ -131,7 +134,8 @@ ver README → Desplegar) y repetir: el paquete no cambia porque solo contiene l
 6. **Notas para la certificación**: indicar que la app funciona sin cuenta y cómo probar avisos y
    widget (apartado 4). Si en ese momento el servidor estuviera sin clave de Riot (chip «Datos
    demo» visible), indicar que los datos son de demostración.
-7. **Enviar a la Store**. La certificación suele tardar de uno a tres días hábiles.
+7. **Enviar a la Store**. La certificación suele tardar de uno a tres días hábiles. Si llega un
+   informe de certificación fallida, seguir [`certificacion.md`](certificacion.md).
 
 ## 6. Después de la certificación
 
@@ -142,7 +146,7 @@ ver README → Desplegar) y repetir: el paquete no cambia porque solo contiene l
    "iarc_rating_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
    ```
 
-2. Subir `VERSION` en `sw.js` (`v10` → `v11`): el manifest está precacheado y sin nueva versión los
+2. Subir `VERSION` en `sw.js` (`v11` → `v12`): el manifest está precacheado y sin nueva versión los
    clientes no lo refrescarían.
 3. Redesplegar: `bash despliegue/desplegar.sh` (ver README → Desplegar).
 
