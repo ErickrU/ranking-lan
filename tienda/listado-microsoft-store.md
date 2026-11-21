@@ -151,14 +151,19 @@ certificación, copiar el `iarc_rating_id` al manifest (ver `publicacion.md`).
 
 ## Capturas (escritorio, 1920 × 1080)
 
-Generadas con `node herramientas/capturas-tienda.mjs` contra la app en modo demo. Todas muestran
-**datos de demostración** (Riot ID ficticios); los textos de abajo sirven como leyenda en Partner
-Center.
+Generadas con `node herramientas/capturas-tienda.mjs` contra **producción**
+(https://d3b4s9lb316i67.cloudfront.net/): muestran **datos reales** de la API de Riot (chip «Datos en
+vivo», sin banner de demostración). El grupo de la captura 02 es el top 3 real del ladder de LAN en
+ese momento (los mismos Riot ID públicos del podio). En la 05, la lista «Últimos cambios» se pobló
+con ejemplos ilustrativos para mostrar el formato de los avisos: tres Riot ID ficticios para los
+cambios de grupo (no se atribuyen cambios a jugadores reales) y el top 3 real para el cambio de
+ranking. El script aborta si la app sirve datos de demostración, así que las capturas nunca llevan
+el chip «Datos demo». Los textos de abajo sirven como leyenda en Partner Center.
 
 | Archivo | Leyenda sugerida |
 |---|---|
 | `capturas/01-ranking.png` | Ranking regional: filtros de región, cola y liga, podio y tabla con LP, V/D y winrate |
 | `capturas/02-perfil-grupo.png` | Mi grupo: detalle de un integrante con rango, historial reciente, campeones más jugados y consejos |
-| `capturas/03-campeones-build.png` | Campeones: ficha de Ahri con la build de la élite (objetos, runas, hechizos y habilidades) |
+| `capturas/03-campeones-build.png` | Campeones: ficha de Caitlyn con la build de la élite (objetos, runas, hechizos y habilidades) |
 | `capturas/04-panel-widgets.png` | Widget «Top 3 LAN» para el panel de widgets de Windows 11 |
 | `capturas/05-avisos.png` | Avisos y distintivos: activación opcional, prueba y lista de últimos cambios |
