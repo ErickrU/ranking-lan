@@ -134,8 +134,10 @@ async function capturar(nombre) {
 /**
  * El widget (04) y los avisos (05) nacen en el service worker: sin el, el
  * panel cae a los datos estaticos del paquete («Datos de demostración»). Si la
- * instalacion de la carga fallo, se registra de nuevo (lo mismo que hara la
- * app en la siguiente visita) y se espera a que controle la pagina.
+ * instalacion de la carga fallo, se registra de nuevo (la propia pagina ya
+ * reintenta desde js/registro-sw.js; esto es un respaldo) y se espera a que
+ * controle la pagina. Un register() rechazado por la misma interrupcion de la
+ * primera visita no aborta la espera: se vuelve a intentar en la siguiente vuelta.
  */
 async function asegurarServiceWorker() {
   const sw = await cdp.evaluar(`(async () => {
@@ -146,8 +148,10 @@ async function asegurarServiceWorker() {
       const registro = await navigator.serviceWorker.getRegistration();
       const enCurso = registro && (registro.installing || registro.waiting || registro.active);
       if (!enCurso) { // la instalacion fallo (registro borrado): volver a intentarlo
-        await navigator.serviceWorker.register('./sw.js', { scope: './' });
         reintentos++;
+        try {
+          await navigator.serviceWorker.register('./sw.js', { scope: './' });
+        } catch { /* interrupcion de la primera visita: se reintenta en la siguiente vuelta */ }
       }
       await new Promise((r) => setTimeout(r, 300));
     }
