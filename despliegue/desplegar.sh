@@ -113,7 +113,11 @@ IMAGEN="$REGISTRO/$REPO:$ETIQUETA"
 echo "Construyendo $IMAGEN ..."
 # --pull: no reutilizar una base cacheada de hace meses; el apk upgrade del
 # Dockerfile aplica despues los parches de Alpine sobre la base fresca.
-docker build --pull --platform "$PLATAFORMA" -t "$IMAGEN" "$RAIZ"
+# --no-cache: si la base no cambio de digest, Docker reutiliza la capa del
+# apk upgrade de la build anterior y la imagen sale con los paquetes viejos
+# (paso con openssl 3.5.9-r0 -> r1: misma base node:22-alpine3.24, capa
+# CACHED). La imagen es pequena; reconstruirla entera cuesta segundos.
+docker build --pull --no-cache --platform "$PLATAFORMA" -t "$IMAGEN" "$RAIZ"
 docker push "$IMAGEN"
 
 # ----------------------------------------------------------------------------

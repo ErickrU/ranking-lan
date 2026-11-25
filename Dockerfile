@@ -6,7 +6,9 @@ FROM node:22-alpine3.24
 # Parches de Alpine: la imagen oficial de Node se publica con los paquetes de
 # la fecha de su build, no con los ultimos del repositorio (ej. CVE-2026-4738:
 # zlib 1.3.2-r1 instalado, 1.4-r0 disponible en v3.24/main). Este paso trae
-# los parches en cada reconstruccion; en despliegue se construye con --pull.
+# los parches en cada reconstruccion; en despliegue se construye con --pull
+# --no-cache: con la misma base, Docker reutilizaria esta capa de la build
+# anterior y los paquetes nuevos (ej. openssl 3.5.9-r1) no entrarian.
 RUN apk upgrade --no-cache
 
 # HOST=0.0.0.0: dentro del contenedor el balanceador (ALB) debe alcanzar la
